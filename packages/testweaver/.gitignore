@@ -19,3 +19,6 @@ npm-debug.log*
 
 # Test coverage
 coverage/
+
+# Generated sample files (for demonstration)
+__generated__/
