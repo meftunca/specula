@@ -14,6 +14,7 @@
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:cli": "npm run build && node dist/cli/index.js generate",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build",
     "test:parser": "node --import tsx src/test-parser.ts",

@@ -16,7 +16,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { glob } from "glob";
 import { watch, type FSWatcher } from "chokidar";
-import { cosmiconfig } from "cosmiconfig";
 import { scanFile } from "../core/parser.js";
 import {
   generateVitest,
@@ -24,6 +23,15 @@ import {
   generatePlaywright,
   generatePlaywrightFileName,
 } from "../generators/index.js";
+import {
+  loadConfig,
+  mergeConfig,
+} from "../config/config.js";
+import {
+  validateFiles,
+  formatValidationResult,
+  type ValidationOptions,
+} from "../validation/validator.js";
 import type { TestSuite, TestIR } from "../types/ir.js";
 
 /**
@@ -51,63 +59,6 @@ interface ValidateOptions {
   config?: string;
   ir?: string;
   strict?: boolean;
-}
-
-/**
- * Loaded configuration structure
- */
-interface LoadedConfig {
-  sourceGlobs?: string[];
-  outputDir?: string;
-  vitestDir?: string;
-  e2eDir?: string;
-}
-
-/**
- * Default configuration values
- */
-const DEFAULT_CONFIG: Required<LoadedConfig> = {
-  sourceGlobs: ["src/**/*.tsx", "src/**/*.jsx"],
-  outputDir: "__generated__",
-  vitestDir: "vitest",
-  e2eDir: "e2e",
-};
-
-/**
- * Loads configuration using cosmiconfig
- */
-async function loadConfig(configPath?: string): Promise<LoadedConfig> {
-  const explorer = cosmiconfig("testweaver");
-
-  try {
-    const result = configPath !== undefined
-      ? await explorer.load(configPath)
-      : await explorer.search();
-
-    if (result !== null && result.config !== undefined) {
-      return result.config as LoadedConfig;
-    }
-  } catch (error) {
-    if (configPath !== undefined) {
-      console.error(`[ERROR] Failed to load config from ${configPath}:`, error);
-      throw error;
-    }
-    // If no config path was specified and search failed, use defaults
-  }
-
-  return {};
-}
-
-/**
- * Merges loaded config with defaults
- */
-function mergeConfig(loaded: LoadedConfig, cliOptions: GenerateOptions): Required<LoadedConfig> {
-  return {
-    sourceGlobs: loaded.sourceGlobs ?? DEFAULT_CONFIG.sourceGlobs,
-    outputDir: cliOptions.output ?? loaded.outputDir ?? DEFAULT_CONFIG.outputDir,
-    vitestDir: loaded.vitestDir ?? DEFAULT_CONFIG.vitestDir,
-    e2eDir: loaded.e2eDir ?? DEFAULT_CONFIG.e2eDir,
-  };
 }
 
 /**
@@ -279,8 +230,11 @@ function generateAllTestFiles(
 async function runGenerate(options: GenerateOptions): Promise<void> {
   console.log("[INFO] Loading configuration...");
   
-  const loadedConfig = await loadConfig(options.config);
-  const config = mergeConfig(loadedConfig, options);
+  const { config: loadedConfig, filepath } = await loadConfig(options.config);
+  if (filepath !== undefined) {
+    console.log(`[INFO] Using config from: ${filepath}`);
+  }
+  const config = mergeConfig(loadedConfig, { config: options.config, output: options.output });
 
   console.log("[INFO] Scanning source files...");
 
@@ -325,8 +279,11 @@ async function runGenerate(options: GenerateOptions): Promise<void> {
 async function runWatch(options: GenerateOptions): Promise<void> {
   console.log("[INFO] Loading configuration for watch mode...");
   
-  const loadedConfig = await loadConfig(options.config);
-  const config = mergeConfig(loadedConfig, options);
+  const { config: loadedConfig, filepath } = await loadConfig(options.config);
+  if (filepath !== undefined) {
+    console.log(`[INFO] Using config from: ${filepath}`);
+  }
+  const config = mergeConfig(loadedConfig, { config: options.config, output: options.output });
 
   // Initial generation
   await runGenerate(options);
@@ -425,6 +382,61 @@ async function runWatch(options: GenerateOptions): Promise<void> {
   });
 }
 
+/**
+ * Main validate function
+ */
+async function runValidate(options: ValidateOptions): Promise<void> {
+  console.log("[INFO] Loading configuration...");
+  
+  const { config: loadedConfig, filepath } = await loadConfig(options.config);
+  if (filepath !== undefined) {
+    console.log(`[INFO] Using config from: ${filepath}`);
+  }
+  const config = mergeConfig(loadedConfig, { config: options.config });
+
+  console.log("[INFO] Scanning source files for validation...");
+
+  // Find all source files
+  const sourceFiles: string[] = [];
+  for (const pattern of config.sourceGlobs) {
+    const matches = await glob(pattern, { ignore: ["node_modules/**", "**/node_modules/**"] });
+    sourceFiles.push(...matches);
+  }
+
+  if (sourceFiles.length === 0) {
+    console.log("[WARN] No source files found matching patterns:", config.sourceGlobs);
+    return;
+  }
+
+  console.log(`[INFO] Found ${sourceFiles.length} source file(s)`);
+  console.log("[INFO] Validating DSL usage...");
+
+  // Validate all files
+  const validationOptions: ValidationOptions = {
+    strict: options.strict,
+    enforceUniqueTestIdsPerContext: true,
+  };
+  
+  const result = validateFiles(sourceFiles, validationOptions);
+
+  // Output results
+  console.log("");
+  console.log(formatValidationResult(result));
+
+  // Exit with appropriate code
+  if (!result.valid) {
+    if (options.strict === true) {
+      console.log("[ERROR] Validation failed with --strict mode (errors or warnings found)");
+    } else {
+      console.log("[ERROR] Validation failed (errors found)");
+    }
+    process.exit(1);
+  } else {
+    console.log("[INFO] Validation passed");
+    process.exit(0);
+  }
+}
+
 const program = new Command();
 
 program
@@ -473,9 +485,10 @@ program
   .option("-i, --ir <file>", "Path to IR file")
   .option("--strict", "Treat warnings as errors")
   .action((options: ValidateOptions) => {
-    console.log("[INFO] Validating...");
-    console.log("[INFO] Options:", options);
-    console.log("[INFO] Validate command not yet implemented");
+    runValidate(options).catch((error: unknown) => {
+      console.error("[ERROR] Validation failed:", error);
+      process.exit(1);
+    });
   });
 
 program.parse();
