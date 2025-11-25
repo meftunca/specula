@@ -92,6 +92,16 @@ function generateStepCode(step: TestStep): string {
         typeof step.value === "string" ? step.value : String(step.value ?? "");
       return `await ${locatorExpr}.press("${escapeString(key)}");`;
     }
+    case "select": {
+      // Select action for dropdown/select elements
+      const value =
+        typeof step.value === "string" ? step.value : String(step.value ?? "");
+      return `await ${locatorExpr}.selectOption("${escapeString(value)}");`;
+    }
+    case "hover":
+      return `await ${locatorExpr}.hover();`;
+    case "clear":
+      return `await ${locatorExpr}.clear();`;
     case "waitFor":
       return `await ${locatorExpr}.waitFor();`;
     case "submitContext":
