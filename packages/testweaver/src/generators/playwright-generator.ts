@@ -42,6 +42,13 @@ function escapeString(str: string): string {
 }
 
 /**
+ * Escapes a string for use in regex patterns
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Generates a locator expression for Playwright
  */
 function generateLocator(selector: Selector): string {
@@ -103,7 +110,7 @@ function generateExpectationCode(expectation: TestExpectation): string {
     // Handle URL assertions or other selector-less expectations
     switch (expectation.type) {
       case "url-contains":
-        return `await expect(page).toHaveURL(/${escapeString(String(expectation.value ?? ""))}/);`;
+        return `await expect(page).toHaveURL(new RegExp("${escapeRegex(String(expectation.value ?? ""))}"));`;
       case "url-exact":
         return `await expect(page).toHaveURL("${escapeString(String(expectation.value ?? ""))}");`;
       default:
@@ -129,11 +136,22 @@ function generateExpectationCode(expectation: TestExpectation): string {
     case "value":
       return `await expect(${locatorExpr}).toHaveValue("${escapeString(String(expectation.value ?? ""))}");`;
     case "has-class":
-      return `await expect(${locatorExpr}).toHaveClass(/${escapeString(String(expectation.value ?? ""))}/);`;
+      return `await expect(${locatorExpr}).toHaveClass(new RegExp("${escapeRegex(String(expectation.value ?? ""))}"));`;
     case "not-has-class":
-      return `await expect(${locatorExpr}).not.toHaveClass(/${escapeString(String(expectation.value ?? ""))}/);`;
-    case "aria":
-      return `await expect(${locatorExpr}).toHaveAttribute("aria-${escapeString(String(expectation.value ?? ""))}");`;
+      return `await expect(${locatorExpr}).not.toHaveClass(new RegExp("${escapeRegex(String(expectation.value ?? ""))}"));`;
+    case "aria": {
+      // aria expectation value format: "label" or "label:value"
+      const ariaValue = String(expectation.value ?? "");
+      const colonIndex = ariaValue.indexOf(":");
+      if (colonIndex === -1) {
+        // Just check for attribute existence
+        return `await expect(${locatorExpr}).toHaveAttribute("aria-${escapeString(ariaValue)}");`;
+      }
+      // Check for attribute with specific value
+      const ariaName = ariaValue.substring(0, colonIndex);
+      const ariaExpectedValue = ariaValue.substring(colonIndex + 1);
+      return `await expect(${locatorExpr}).toHaveAttribute("aria-${escapeString(ariaName)}", "${escapeString(ariaExpectedValue)}");`;
+    }
     case "snapshot":
       return `await expect(${locatorExpr}).toHaveScreenshot();`;
     case "custom":

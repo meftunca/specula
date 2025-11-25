@@ -42,6 +42,13 @@ function escapeString(str: string): string {
 }
 
 /**
+ * Escapes a string for use in regex patterns
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Generates a selector expression for React Testing Library
  */
 function generateSelector(selector: Selector): string {
@@ -54,6 +61,26 @@ function generateSelector(selector: Selector): string {
       return `screen.getByLabelText("${escapeString(selector.value)}")`;
     case "placeholder":
       return `screen.getByPlaceholderText("${escapeString(selector.value)}")`;
+    case "css":
+    case "custom":
+    default:
+      return `document.querySelector("${escapeString(selector.value)}")`;
+  }
+}
+
+/**
+ * Generates a query selector expression for React Testing Library (for not-exists checks)
+ */
+function generateQuerySelector(selector: Selector): string {
+  switch (selector.type) {
+    case "testId":
+      return `screen.queryByTestId("${escapeString(selector.value)}")`;
+    case "role":
+      return `screen.queryByRole("${escapeString(selector.value)}")`;
+    case "labelText":
+      return `screen.queryByLabelText("${escapeString(selector.value)}")`;
+    case "placeholder":
+      return `screen.queryByPlaceholderText("${escapeString(selector.value)}")`;
     case "css":
     case "custom":
     default:
@@ -112,6 +139,7 @@ function generateExpectationCode(expectation: TestExpectation): string {
   }
 
   const selectorExpr = generateSelector(expectation.selector);
+  const querySelectorExpr = generateQuerySelector(expectation.selector);
   const elementVar = `el_${expectation.id.replace(/-/g, "_")}`;
 
   switch (expectation.type) {
@@ -122,19 +150,30 @@ function generateExpectationCode(expectation: TestExpectation): string {
     case "exists":
       return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toBeInTheDocument();`;
     case "not-exists":
-      return `expect(screen.queryByTestId("${escapeString(expectation.selector.value)}")).not.toBeInTheDocument();`;
+      return `expect(${querySelectorExpr}).not.toBeInTheDocument();`;
     case "text":
       return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toHaveTextContent("${escapeString(String(expectation.value ?? ""))}");`;
     case "exact-text":
-      return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toHaveTextContent(/^${escapeString(String(expectation.value ?? ""))}$/);`;
+      return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toHaveTextContent(/^${escapeRegex(String(expectation.value ?? ""))}$/);`;
     case "value":
       return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toHaveValue("${escapeString(String(expectation.value ?? ""))}");`;
     case "has-class":
       return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toHaveClass("${escapeString(String(expectation.value ?? ""))}");`;
     case "not-has-class":
       return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).not.toHaveClass("${escapeString(String(expectation.value ?? ""))}");`;
-    case "aria":
-      return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toHaveAttribute("aria-${escapeString(String(expectation.value ?? ""))}");`;
+    case "aria": {
+      // aria expectation value format: "label" or "label:value"
+      const ariaValue = String(expectation.value ?? "");
+      const colonIndex = ariaValue.indexOf(":");
+      if (colonIndex === -1) {
+        // Just check for attribute existence
+        return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toHaveAttribute("aria-${escapeString(ariaValue)}");`;
+      }
+      // Check for attribute with specific value
+      const ariaName = ariaValue.substring(0, colonIndex);
+      const ariaExpectedValue = ariaValue.substring(colonIndex + 1);
+      return `const ${elementVar} = ${selectorExpr};\n    expect(${elementVar}).toHaveAttribute("aria-${escapeString(ariaName)}", "${escapeString(ariaExpectedValue)}");`;
+    }
     case "snapshot":
       return `expect(${selectorExpr}).toMatchSnapshot();`;
     case "custom":
