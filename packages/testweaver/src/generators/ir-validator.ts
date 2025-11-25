@@ -78,6 +78,30 @@ const SUPPORTED_EXPECT_TYPES: readonly ExpectType[] = [
 ];
 
 /**
+ * Actions that require a value parameter
+ */
+const ACTIONS_REQUIRING_VALUE: readonly StepAction[] = ["type", "change", "key", "select"];
+
+/**
+ * Expectation types that don't require a selector (URL assertions)
+ */
+const SELECTORLESS_EXPECT_TYPES: readonly ExpectType[] = ["url-contains", "url-exact"];
+
+/**
+ * Expectation types that require a value parameter
+ */
+const EXPECTS_REQUIRING_VALUE: readonly ExpectType[] = [
+  "text",
+  "exact-text",
+  "value",
+  "has-class",
+  "not-has-class",
+  "aria",
+  "url-contains",
+  "url-exact",
+];
+
+/**
  * Validates a single TestStep
  */
 function validateStep(step: TestStep, context: string): ValidationIssue[] {
@@ -108,8 +132,7 @@ function validateStep(step: TestStep, context: string): ValidationIssue[] {
   }
 
   // Validate that actions requiring a value have one
-  const actionsRequiringValue: StepAction[] = ["type", "change", "key", "select"];
-  if (actionsRequiringValue.includes(step.action) && step.value === undefined) {
+  if (ACTIONS_REQUIRING_VALUE.includes(step.action) && step.value === undefined) {
     issues.push({
       severity: "warning",
       message: `Step "${step.id}" with action "${step.action}" is missing a value`,
@@ -143,8 +166,7 @@ function validateExpectation(expectation: TestExpectation, context: string): Val
   }
 
   // Validate that expectations requiring a selector have one (except URL assertions)
-  const selectorlessTypes: ExpectType[] = ["url-contains", "url-exact"];
-  if (!selectorlessTypes.includes(expectation.type) && !expectation.selector) {
+  if (!SELECTORLESS_EXPECT_TYPES.includes(expectation.type) && !expectation.selector) {
     issues.push({
       severity: "warning",
       message: `Expectation "${expectation.id}" of type "${expectation.type}" is missing a selector`,
@@ -153,17 +175,7 @@ function validateExpectation(expectation: TestExpectation, context: string): Val
   }
 
   // Validate that expectations requiring a value have one
-  const valuesRequiringTypes: ExpectType[] = [
-    "text",
-    "exact-text",
-    "value",
-    "has-class",
-    "not-has-class",
-    "aria",
-    "url-contains",
-    "url-exact",
-  ];
-  if (valuesRequiringTypes.includes(expectation.type) && expectation.value === undefined) {
+  if (EXPECTS_REQUIRING_VALUE.includes(expectation.type) && expectation.value === undefined) {
     issues.push({
       severity: "warning",
       message: `Expectation "${expectation.id}" of type "${expectation.type}" is missing a value`,
@@ -305,12 +317,20 @@ export function validateIR(ir: TestIR): IRValidationResult {
 }
 
 /**
+ * Maps severity to log prefix
+ */
+const SEVERITY_PREFIX: Record<IssueSeverity, string> = {
+  error: "[ERROR]",
+  warning: "[WARN]",
+  info: "[INFO]",
+};
+
+/**
  * Logs validation issues to console
  */
 export function logValidationIssues(result: IRValidationResult): void {
   for (const issue of result.issues) {
-    const prefix = issue.severity === "error" ? "[ERROR]" :
-                   issue.severity === "warning" ? "[WARN]" : "[INFO]";
+    const prefix = SEVERITY_PREFIX[issue.severity];
     const contextStr = issue.context ? ` (${issue.context})` : "";
     console.log(`${prefix} ${issue.message}${contextStr}`);
   }

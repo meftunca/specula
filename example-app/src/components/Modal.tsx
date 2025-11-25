@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./Modal.css";
 
 interface ModalProps {
@@ -161,6 +161,3 @@ export function ModalDemo() {
     </div>
   );
 }
-
-// Fix: Need to import useState
-import { useState } from "react";
