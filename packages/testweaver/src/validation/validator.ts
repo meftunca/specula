@@ -293,24 +293,23 @@ export function validateFile(
       // Check for test ID
       const testIdAttr = extractAttribute(node, DSL_ATTRS.ID);
       if (testIdAttr !== undefined && contexts.length > 0 && enforceUniqueTestIdsPerContext) {
-        const currentContext = contexts[contexts.length - 1];
-        if (currentContext !== undefined) {
-          const existing = currentContext.testIds.get(testIdAttr.value);
-          if (existing !== undefined) {
-            messages.push({
-              severity: "warning",
-              filePath,
-              line: testIdAttr.line,
-              column: testIdAttr.column,
-              message: `Duplicate data-test-id "${testIdAttr.value}" in context "${currentContext.context}" scenario "${currentContext.scenario}". First defined at line ${existing.line}.`,
-              ruleId: "duplicate-test-id",
-            });
-          } else {
-            currentContext.testIds.set(testIdAttr.value, {
-              line: testIdAttr.line,
-              column: testIdAttr.column,
-            });
-          }
+        // Safe to use non-null assertion since we already checked contexts.length > 0
+        const currentContext = contexts[contexts.length - 1]!;
+        const existing = currentContext.testIds.get(testIdAttr.value);
+        if (existing !== undefined) {
+          messages.push({
+            severity: "warning",
+            filePath,
+            line: testIdAttr.line,
+            column: testIdAttr.column,
+            message: `Duplicate data-test-id "${testIdAttr.value}" in context "${currentContext.context}" scenario "${currentContext.scenario}". First defined at line ${existing.line}.`,
+            ruleId: "duplicate-test-id",
+          });
+        } else {
+          currentContext.testIds.set(testIdAttr.value, {
+            line: testIdAttr.line,
+            column: testIdAttr.column,
+          });
         }
       }
 
