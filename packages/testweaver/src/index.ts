@@ -9,3 +9,11 @@ export * from "./types/index.js";
 
 // Export parser
 export { scanFile } from "./core/parser.js";
+
+// Export generators
+export {
+  generateVitest,
+  generateVitestFileName,
+  generatePlaywright,
+  generatePlaywrightFileName,
+} from "./generators/index.js";
