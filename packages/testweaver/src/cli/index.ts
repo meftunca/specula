@@ -148,8 +148,15 @@ function scanAllFiles(sourceFiles: string[]): TestIR {
       for (const suite of fileSuites) {
         const existing = suiteMap.get(suite.context);
         if (existing !== undefined) {
-          // Merge cases from this suite into the existing one
-          existing.cases.push(...suite.cases);
+          // Merge cases from this suite into the existing one, avoiding duplicates
+          for (const newCase of suite.cases) {
+            const caseExists = existing.cases.some(
+              (c) => c.id === newCase.id
+            );
+            if (!caseExists) {
+              existing.cases.push(newCase);
+            }
+          }
           // Merge sourceFiles
           for (const sourceFile of suite.sourceFiles) {
             const alreadyExists = existing.sourceFiles.some(
@@ -349,8 +356,15 @@ async function runWatch(options: GenerateOptions): Promise<void> {
     console.log(`[INFO] Regenerating due to changes in: ${files.join(", ")}`);
 
     try {
-      // Re-scan only changed files and regenerate
-      const ir = scanAllFiles(files);
+      // Rescan all source files to ensure complete context
+      // This is safer than just scanning changed files, as test contexts may span multiple files
+      const allSourceFiles: string[] = [];
+      for (const pattern of config.sourceGlobs) {
+        const matches = await glob(pattern, { ignore: ["node_modules/**", "**/node_modules/**"] });
+        allSourceFiles.push(...matches);
+      }
+      
+      const ir = scanAllFiles(allSourceFiles);
       
       if (ir.suites.length > 0) {
         const { totalVitest, totalE2e } = generateAllTestFiles(

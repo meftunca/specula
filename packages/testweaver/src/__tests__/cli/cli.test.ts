@@ -8,12 +8,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // Paths for testing
-const testweaerRoot = path.resolve(__dirname, "../../../");
+const testweaverRoot = path.resolve(__dirname, "../../../");
 const fixturesDir = path.resolve(__dirname, "../fixtures");
 const testOutputDir = path.resolve(fixturesDir, "__test_generated__");
 
 // CLI path
-const cliPath = path.resolve(testweaerRoot, "dist/cli/index.js");
+const cliPath = path.resolve(testweaverRoot, "dist/cli/index.js");
 
 // Create a temporary config file for tests
 const testConfigPath = path.resolve(fixturesDir, "testweaver.config.json");
@@ -26,7 +26,7 @@ describe("CLI", () => {
   beforeAll(() => {
     // Ensure the CLI is built
     if (!fs.existsSync(cliPath)) {
-      execSync("npm run build", { cwd: testweaerRoot });
+      execSync("npm run build", { cwd: testweaverRoot });
     }
     
     // Clean up any previous test output
