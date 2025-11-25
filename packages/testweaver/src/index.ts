@@ -6,3 +6,6 @@
 
 // Export all types
 export * from "./types/index.js";
+
+// Export parser
+export { scanFile } from "./core/parser.js";
