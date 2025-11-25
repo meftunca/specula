@@ -6,3 +6,4 @@
 
 export { generateVitest, generateFileName as generateVitestFileName } from "./vitest-generator.js";
 export { generatePlaywright, generateFileName as generatePlaywrightFileName } from "./playwright-generator.js";
+export { validateIR, logValidationIssues, type IRValidationResult, type ValidationIssue } from "./ir-validator.js";

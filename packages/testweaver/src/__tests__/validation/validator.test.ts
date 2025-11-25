@@ -177,6 +177,9 @@ describe("Validation", () => {
               <input data-test-id="f7" data-test-step="waitFor" />
               <input data-test-id="f8" data-test-step="submitContext" />
               <input data-test-id="f9" data-test-step="custom:something" />
+              <select data-test-id="f10" data-test-step="select:option1" />
+              <input data-test-id="f11" data-test-step="hover" />
+              <input data-test-id="f12" data-test-step="clear" />
             </div>
           );
         }

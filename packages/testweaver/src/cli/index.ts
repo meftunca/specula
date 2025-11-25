@@ -22,6 +22,8 @@ import {
   generateVitestFileName,
   generatePlaywright,
   generatePlaywrightFileName,
+  validateIR,
+  logValidationIssues,
 } from "../generators/index.js";
 import {
   loadConfig,
@@ -200,6 +202,19 @@ function generateAllTestFiles(
   vitestDir: string,
   e2eDir: string
 ): { totalVitest: number; totalE2e: number } {
+  // Validate IR before generation
+  const validationResult = validateIR(ir);
+  
+  if (validationResult.warningCount > 0 || validationResult.errorCount > 0) {
+    console.log("[INFO] IR validation results:");
+    logValidationIssues(validationResult);
+    console.log("");
+  }
+
+  if (!validationResult.valid) {
+    console.error("[ERROR] IR validation failed. Generation may produce incomplete results.");
+  }
+
   let totalVitest = 0;
   let totalE2e = 0;
 
