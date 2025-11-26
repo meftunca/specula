@@ -153,6 +153,9 @@ export type StepAction =
   | "focus"
   | "blur"
   | "key"
+  | "select"
+  | "hover"
+  | "clear"
   | "custom"
   | "waitFor"
   | "submitContext";

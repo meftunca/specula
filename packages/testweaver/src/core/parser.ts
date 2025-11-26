@@ -32,6 +32,10 @@ const DSL_ATTRS = {
   ID: "data-test-id",
   STEP: "data-test-step",
   EXPECT: "data-test-expect",
+  /** Extended selector attributes */
+  ROLE: "data-test-role",
+  LABEL: "data-test-label",
+  PLACEHOLDER: "data-test-placeholder",
 } as const;
 
 /**
@@ -66,6 +70,9 @@ interface ContextElementData {
  */
 interface ChildElementData {
   testId?: string;
+  role?: string;
+  label?: string;
+  placeholder?: string;
   steps: ParsedStep[];
   expectations: ParsedExpectation[];
   location: LocationRef;
@@ -178,6 +185,9 @@ function isValidStepAction(action: string): action is StepAction {
     "focus",
     "blur",
     "key",
+    "select",
+    "hover",
+    "clear",
     "custom",
     "waitFor",
     "submitContext",
@@ -259,13 +269,44 @@ function normalizeExpectType(type: string): ExpectType | null {
 }
 
 /**
- * Creates a Selector from a data-test-id value
+ * Selector attributes extracted from a JSX element
  */
-function createSelector(testId: string): Selector {
-  return {
-    type: "testId",
-    value: testId,
-  };
+interface SelectorAttrs {
+  testId?: string | undefined;
+  role?: string | undefined;
+  label?: string | undefined;
+  placeholder?: string | undefined;
+}
+
+/**
+ * Creates a Selector from available attributes, preferring testId, then role, then label, then placeholder
+ */
+function createSelectorFromAttrs(attrs: SelectorAttrs): Selector | undefined {
+  if (attrs.testId !== undefined) {
+    return {
+      type: "testId",
+      value: attrs.testId,
+    };
+  }
+  if (attrs.role !== undefined) {
+    return {
+      type: "role",
+      value: attrs.role,
+    };
+  }
+  if (attrs.label !== undefined) {
+    return {
+      type: "labelText",
+      value: attrs.label,
+    };
+  }
+  if (attrs.placeholder !== undefined) {
+    return {
+      type: "placeholder",
+      value: attrs.placeholder,
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -369,22 +410,35 @@ export function scanFile(filePath: string): TestSuite[] {
             }
 
             const testId = extractAttribute(childPath.node, DSL_ATTRS.ID);
+            const roleAttr = extractAttribute(childPath.node, DSL_ATTRS.ROLE);
+            const labelAttr = extractAttribute(childPath.node, DSL_ATTRS.LABEL);
+            const placeholderAttr = extractAttribute(childPath.node, DSL_ATTRS.PLACEHOLDER);
             const stepDsl = extractAttribute(childPath.node, DSL_ATTRS.STEP);
             const expectDsl = extractAttribute(childPath.node, DSL_ATTRS.EXPECT);
 
             // Only collect if there's at least one DSL attribute
-            if (testId !== undefined || stepDsl !== undefined || expectDsl !== undefined) {
+            const hasSelector = testId !== undefined || roleAttr !== undefined || labelAttr !== undefined || placeholderAttr !== undefined;
+            if (hasSelector || stepDsl !== undefined || expectDsl !== undefined) {
               const childData: ChildElementData = {
                 steps: stepDsl !== undefined ? parseStepDsl(stepDsl) : [],
                 expectations: expectDsl !== undefined ? parseExpectDsl(expectDsl) : [],
                 location: createLocationRef(
                   filePath,
                   childPath.node,
-                  testId ?? stepDsl ?? expectDsl
+                  testId ?? roleAttr ?? labelAttr ?? placeholderAttr ?? stepDsl ?? expectDsl
                 ),
               };
               if (testId !== undefined) {
                 childData.testId = testId;
+              }
+              if (roleAttr !== undefined) {
+                childData.role = roleAttr;
+              }
+              if (labelAttr !== undefined) {
+                childData.label = labelAttr;
+              }
+              if (placeholderAttr !== undefined) {
+                childData.placeholder = placeholderAttr;
               }
               contextData.children.push(childData);
             }
@@ -442,15 +496,17 @@ export function scanFile(filePath: string): TestSuite[] {
     let expectIndex = 0;
 
     for (const child of children) {
-      const { testId, steps, expectations, location: childLocation } = child;
+      const { testId, role, label, placeholder, steps, expectations, location: childLocation } = child;
+      const selectorAttrs: SelectorAttrs = { testId, role, label, placeholder };
+      const selector = createSelectorFromAttrs(selectorAttrs);
 
       // Build steps
       for (const parsedStep of steps) {
-        if (testId === undefined) {
-          // Warn about steps without a test ID (no selector)
+        if (selector === undefined) {
+          // Warn about steps without a selector
           console.warn(
             `[TestWeaver] Warning: Step "${parsedStep.action}" at ${childLocation.filePath}:${childLocation.line} ` +
-            `is missing data-test-id. Steps require a selector to target elements.`
+            `is missing a selector (data-test-id, data-test-role, data-test-label, or data-test-placeholder). Steps require a selector to target elements.`
           );
           continue;
         }
@@ -458,7 +514,7 @@ export function scanFile(filePath: string): TestSuite[] {
         const step: TestStep = {
           id: generateStepId(stepIndex),
           action: parsedStep.action,
-          selector: createSelector(testId),
+          selector,
           source: childLocation,
         };
 
@@ -478,8 +534,8 @@ export function scanFile(filePath: string): TestSuite[] {
           source: childLocation,
         };
 
-        if (testId !== undefined) {
-          expectation.selector = createSelector(testId);
+        if (selector !== undefined) {
+          expectation.selector = selector;
         }
 
         if (parsedExpect.value !== undefined) {
