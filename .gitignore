@@ -6,6 +6,10 @@ dist/
 build/
 .testgen/
 
+# Docusaurus
+docs/.docusaurus/
+docs/build/
+
 # IDE
 .idea/
 .vscode/
