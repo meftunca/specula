@@ -3,75 +3,79 @@ id: intro
 title: Sistem Genel Bakışı
 sidebar_label: Genel Bakış
 sidebar_position: 1
-description: TestWeaver - Context tabanlı otomatik test üretim sistemi genel mimarisi
+description: TestWeaver için genel mimari, bugünkü stabil kapsam ve uzun vadeli yön
 ---
 
+## 1.0. Durum Notu
+
+Bu sayfa, TestWeaver’ın **genel sistem vizyonunu** anlatır. Ancak mevcut implementasyon ile uzun vadeli hedefler aynı şey değildir.
+
+### Bugün stabil olan kapsam
+
+- React `tsx` / `jsx` parsing
+- Attribute tabanlı DSL (`data-test-*`)
+- Vitest + React Testing Library output
+- Playwright output
+- Validation ve watch mode
+
+### Henüz roadmap’te olan alanlar
+
+- Vue / Svelte / plain HTML desteği
+- Comment macro DSL
+- Genişletilmiş unit / logic DSL
+
+Bu nedenle aşağıdaki bölümler yer yer **hedef mimariyi** anlatır; hepsi mevcut kod tabanında tamamlanmış özellikler olarak okunmamalıdır.
 
 ## 1.1. Problem Tanımı
 
-Modern frontend projelerinde (React, Svelte, Vue, HTML):
+Modern frontend projelerinde UI bileşenleri çok hızlı evriliyor. Testler ise çoğu zaman:
 
-- UI bileşenleri çok hızlı evriliyor.
-- Form kavramı giderek flu hale geliyor (custom hooks, context, headless UI, modallar, wizard’lar…).
-- Unit ve E2E testlerin yazılması genelde:
-  - Gecikiyor,
-  - Standart dışı,
-  - Geliştiricinin kişisel disiplinine kalıyor.
+- gecikiyor,
+- ekip içinde standart dışı kalıyor,
+- geliştiricinin kişisel disiplinine bağımlı oluyor.
 
-Ama UI kodunun kendisi, testler hakkında çok güzel “ipucu” sağlayabilecek durumda:
+Ama UI kodunun kendisi aslında test üretimi için çok değerli sinyaller taşıyor:
 
-- Hangi component hangi context’te?
-- Hangi interaction senaryoları var? (happy-path, invalid, edge-case…)
-- Hangi elementte hangi aksiyon yapılmalı?
-- Testte beklenen sonuç ne?
+- hangi context içinde çalıştığı,
+- hangi kullanıcı adımlarını beklediği,
+- hangi elementlerle etkileşim kurulacağı,
+- hangi sonuçların doğrulanacağı.
 
-Bu sistemin amacı:
+TestWeaver’ın temel amacı şudur:
 
-> UI kodunun içine **küçük DSL parçaları** serpiştirerek, testleri **otomatik üretmek** ve “test yazmayı” büyük ölçüde deklaratif hale getirmek.
-
----
+> UI kodunun içine küçük DSL parçaları yerleştirerek, test üretimini daha deklaratif ve daha tekrarlanabilir hale getirmek.
 
 ## 1.2. Temel Yaklaşım
 
 Sistem üç ana aşamadan oluşur:
 
 1. **Source Scan & Parse**
-   - React/Svelte/Vue/HTML dosyalarını AST seviyesinde parse eder.
-   - `data-test-*` attribute’ları ve `@test-*` comment macro’larını toplar.
-   - Bunları framework’ten bağımsız, normalleştirilmiş bir yapıya dönüştürür.
+   - Bugünkü implementasyonda React TSX/JSX dosyaları AST seviyesinde parse edilir.
+   - `data-test-*` attribute’ları toplanır.
+   - Bunlar framework-agnostic bir ara temsile dönüştürülür.
 
 2. **IR (Intermediate Representation)**
-   - Toplanan veriyi **context-based bir IR** haline getirir.
-   - IR, "form" kavramından tamamen bağımsızdır.
-   - IR’de şu kavramlar vardır:
-     - `context` (örn: login, checkout, search)
-     - `scenario` (örn: happy-path, invalid-email, missing-password)
-     - `steps` (action’lar)
-     - `expectations` (assert’ler)
+   - Toplanan bilgi context / scenario / step / expectation yapısına normalize edilir.
+   - IR, generator katmanından önce ortak sözleşme görevi görür.
 
-3. **Test Generator’lar**
-   - IR’den farklı test tiplerine dönüştüren modüller:
-     - **UI / Component Test Generatörü**
-       - Örn: React Testing Library / Vue Testing Library
-     - **Unit Test Generatörü**
-       - Örn: Jest / Vitest (pure functions + hooks + component logic)
-     - **Otomasyon / E2E Test Generatörü**
-       - Örn: Cypress / Playwright
+3. **Generator’lar**
+   - Bugün iki ana çıktı üretilir:
+     - React Testing Library + Vitest
+     - Playwright
 
----
+## 1.3. Context-Based Tasarım
 
-## 1.3. Context-Based Tasarımın Özellikleri
+- `<form>` etiketine bağımlı değildir.
+- Context ve scenario bazlı çalışır.
+- Modal, wizard, side panel, arama yüzeyi gibi klasik form olmayan akışları da kapsayabilir.
 
-- `<form>` etiketine **bağımlı değildir**.
-- Herhangi bir UI parçası, bir **context** ve bir veya birden fazla **scenario** altında tanımlanabilir.
-- Multi-step wizard, modal içi form, side panel işlemi gibi yapıları rahatlıkla kapsar.
-
-Örnek (React JSX):
+Örnek bir React DSL bloğu:
 
 ```jsx
 <div
   data-test-context="login"
   data-test-scenario="happy-path"
+  data-test-route="/login"
 >
   <Input
     data-test-id="email"
@@ -87,134 +91,72 @@ Sistem üç ana aşamadan oluşur:
   >
     Login
   </Button>
-
   <Alert
     data-test-id="success-message"
-    data-test-expect="visible-text:Welcome"
+    data-test-expect="visible; text:Welcome"
   />
 </div>
 ```
 
-Bu bloktan, sistem otomatik olarak şu bilgileri çıkarır:
+Bu bloktan çıkarılan bilgi kabaca şöyledir:
 
 - context: `login`
 - scenario: `happy-path`
 - steps:
-  - email → type “user@example.com”
-  - password → type “123456”
-  - submit → click
+  - email → `type:user@example.com`
+  - password → `type:123456`
+  - submit → `click`
 - expectations:
-  - success-message → visible-text “Welcome”
+  - success-message → `visible`
+  - success-message → `text:Welcome`
 
-Bu IR daha sonra:
+## 1.4. Bugünkü Mimari Resim
 
-- React Testing Library unit testi,
-- Cypress E2E testi,
-- Gerekirse başka runner’lar (Playwright, WebdriverIO…) için generate edilebilir.
+Bugünkü çalışan akış şu şekildedir:
 
----
+1. React bileşenleri taranır.
+2. DSL attribute’ları parse edilir.
+3. IR oluşturulur.
+4. Aynı IR’den:
+   - Vitest test dosyaları
+   - Playwright test dosyaları
+   üretilir.
+5. `validate` komutu ile DSL kullanımı kontrol edilir.
 
-## 1.4. Test Katmanları
+## 1.5. Modüller
 
-### 1.4.1. UI / Component Testleri
-
-Amaç:
-
-- Component’in temel UI davranışını,
-- Kullanıcının gördüğü/etkileşime girdiği surface’i,
-- Basit validation ve state değişimlerini test etmek.
-
-Özellikler:
-
-- Component render edilir (unit veya integration seviyesinde).
-- DSL’de tanımlanan step’ler uygulanır.
-- DSL’de tanımlanan expectation’lar assert edilir.
-
-### 1.4.2. Unit Testleri
-
-Amaç:
-
-- Pure function’lar,
-- Custom hook’lar,
-- İş kuralları (business logic),
-- Reducer / state machine’ler…
-
-İki kaynak olabilir:
-
-1. DSL üzerinden gelen context/scenario’lar → ilgili logic fonksiyonlarına map edilerek unit test üretilmesi.
-2. Ayrı bir “logic DSL” tanımlanarak (örn. `@unit-test` macro’ları) doğrudan fonksiyon bazlı tanımlar.
-
-Bu dokümanda ana odak UI/interaction DSL olduğu için, unit tarafı **daha küçük ama extensible bir spec** olarak verilecektir.
-
-### 1.4.3. Otomasyon (E2E) Testleri
-
-Amaç:
-
-- Gerçek kullanıcı akışlarını test etmek.
-- Routing, network, backend entegrasyonları ile birlikte uçtan uca davranışı doğrulamak.
-
-Özellikler:
-
-- IR içindeki `context` + `scenario` kombinasyonları,
-  - `route` bilgisi (comment veya config’ten),
-  - `steps` ve `expectations` ile beraber E2E runner’lara (Cypress, Playwright) çevrilir.
-
----
-
-## 1.5. Yüksek Seviye Mimarinin Modülleri
-
-1. **Core Parser**
-   - Çeşitli framework’ler için adapter’lar:
-     - React (Babel)
-     - Vue (`@vue/compiler-sfc`)
-     - Svelte (`svelte/compiler`)
-     - Plain HTML (parse5 vs.)
-   - Tek bir unified AST interface’ine normalize eder.
-   - DSL direktiflerini (attribute + comments) bu AST üzerinden toplar.
-
-2. **DSL Interpreter**
-   - `data-test-*` ve `@test-*` macro’larını parse eder.
-   - Hatalı DSL kullanımını raporlar.
-   - Çıktıyı IR modülüne iletir.
-
-3. **IR Builder**
-   - DSL’den gelen parçaları `Context`, `Scenario`, `Step`, `Expectation` objelerine dönüştürür.
-   - IR’yi versiyonlanabilir bir formatta tutar (örn: `version: 1`).
-   - IR’yi JSON veya JS/TS objesi olarak dışarıya verir.
-
-4. **Generator’lar**
-   - IR → test runner spesifik kod üreten modüller:
-     - `jest-react-testing-library-generator`
-     - `vitest-vue-generator`
-     - `cypress-generator`
-     - `playwright-generator`
-
-5. **CLI & Config**
-   - `testgen` CLI komutu:
-     - `testgen scan`
-     - `testgen generate`
-     - `testgen validate`
-     - `testgen watch`
-   - Proje kökünde `testgen.config.(js|ts|json)` ile yapılandırılır.
-
----
+- **Core Parser**
+  - React TSX/JSX için Babel tabanlı parser
+- **Validation**
+  - DSL kurallarını ve yapısal problemleri kontrol eder
+- **IR Builder**
+  - parse sonucunu ortak modele dönüştürür
+- **Generators**
+  - Vitest ve Playwright çıktısı üretir
+- **CLI**
+  - `generate`, `validate`, `watch` akışlarını yönetir
 
 ## 1.6. Kapsam ve Hedefler
 
-### 1.6.1. İlk Versiyon (MVP)
+### 1.6.1. Mevcut stabil sürüm
 
 - Framework: React (JSX/TSX)
-- Test runner: Jest + React Testing Library
-- Otomasyon runner: Cypress
-- DSL:
-  - Attribute-based context/scenario/step/expect
-  - Comment-based context/scenario/route/steps/expect (basit grammar)
+- DSL: Attribute-based context / scenario / step / expect
+- UI test output: Vitest + React Testing Library
+- E2E output: Playwright
+- CLI: generate / validate / watch
 
-### 1.6.2. Sonraki Aşamalar
+### 1.6.2. Sonraki aşamalar
 
 - Vue ve Svelte desteği
-- Playwright desteği
-- Custom hook / logic için unit test DSL’leri
-- Pattern library (`data-test-from="predefined-xxx"`) için merkezi yönetim
+- Comment macro DSL
+- Daha geniş unit / logic DSL
+- Pattern library ve gelişmiş config deneyimi
 
-Bu overview, diğer dokümanlarda detaylandırılacak spesifikasyonun çerçevesini çizer.
+## 1.7. Özet
+
+Bugün TestWeaver en doğru şekilde şu cümleyle tarif edilir:
+
+> **React-first, attribute-DSL tabanlı, Vitest ve Playwright üreten bir test generator.**
+
+Diğer dokümanlar daha geniş ürün vizyonunu taşımaya devam eder; ancak mevcut kod tabanını değerlendirirken bu sayfadaki stabil kapsam esas alınmalıdır.

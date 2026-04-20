@@ -103,15 +103,19 @@ describe("login", () => {
   it("happy-path", async () => {
     render(<Login />);
 
+    const email = () => screen.getByTestId("email");
+    const password = () => screen.getByTestId("password");
+    const submit = () => screen.getByTestId("submit");
+    const successMessage = () => screen.getByTestId("success-message");
+
     // Steps
-    fireEvent.change(screen.getByTestId("email"), { target: { value: "user@example.com" } });
-    fireEvent.change(screen.getByTestId("password"), { target: { value: "123456" } });
-    fireEvent.click(screen.getByTestId("submit"));
+    fireEvent.change(email(), { target: { value: "user@example.com" } });
+    fireEvent.change(password(), { target: { value: "123456" } });
+    fireEvent.click(submit());
 
     // Expectations
-    const el_exp_1 = screen.getByTestId("success-message");
-    expect(el_exp_1).toBeVisible();
-    expect(el_exp_1).toHaveTextContent("Welcome");
+    expect(successMessage()).toBeVisible();
+    expect(successMessage()).toHaveTextContent("Welcome");
   });
 });
 ```
@@ -126,14 +130,19 @@ test.describe("login", () => {
   test("happy-path", async ({ page }) => {
     await page.goto("/login");
 
+    const email = page.locator('[data-test-id="email"]');
+    const password = page.locator('[data-test-id="password"]');
+    const submit = page.locator('[data-test-id="submit"]');
+    const successMessage = page.locator('[data-test-id="success-message"]');
+
     // Steps
-    await page.locator('[data-test-id="email"]').fill("user@example.com");
-    await page.locator('[data-test-id="password"]').fill("123456");
-    await page.locator('[data-test-id="submit"]').click();
+    await email.fill("user@example.com");
+    await password.fill("123456");
+    await submit.click();
 
     // Expectations
-    await expect(page.locator('[data-test-id="success-message"]')).toBeVisible();
-    await expect(page.locator('[data-test-id="success-message"]')).toContainText("Welcome");
+    await expect(successMessage).toBeVisible();
+    await expect(successMessage).toContainText("Welcome");
   });
 });
 ```
@@ -260,17 +269,24 @@ test.describe("contact", () => {
   test("submit-form", async ({ page }) => {
     await page.goto("/contact");
 
+    const nameInput = page.locator('[data-test-id="name-input"]');
+    const emailInput = page.locator('[data-test-id="email-input"]');
+    const subjectSelect = page.locator('[data-test-id="subject-select"]');
+    const messageTextarea = page.locator('[data-test-id="message-textarea"]');
+    const submitBtn = page.locator('[data-test-id="submit-btn"]');
+    const successAlert = page.locator('[data-test-id="success-alert"]');
+
     // Steps
-    await page.locator('[data-test-id="name-input"]').fill("John Doe");
-    await page.locator('[data-test-id="email-input"]').fill("john@example.com");
-    await page.locator('[data-test-id="subject-select"]').selectOption("support");
-    await page.locator('[data-test-id="message-textarea"]').fill("I need help with my account.");
-    await page.locator('[data-test-id="submit-btn"]').click();
+    await nameInput.fill("John Doe");
+    await emailInput.fill("john@example.com");
+    await subjectSelect.selectOption("support");
+    await messageTextarea.fill("I need help with my account.");
+    await submitBtn.click();
 
     // Expectations
-    await expect(page.locator('[data-test-id="success-alert"]')).toBeVisible();
-    await expect(page.locator('[data-test-id="success-alert"]')).toHaveAttribute("aria-live", "polite");
-    await expect(page.locator('[data-test-id="success-alert"]')).toHaveClass(/success-message/);
+    await expect(successAlert).toBeVisible();
+    await expect(successAlert).toHaveAttribute("aria-live", "polite");
+    await expect(successAlert).toHaveClass(/success-message/);
   });
 });
 ```
@@ -517,6 +533,8 @@ Examples using role, label, and placeholder selectors instead of test IDs:
 ---
 
 ## Tips for Effective Tests
+
+> Not: Bu sayfadaki component örneklerinin bazıları, React-first stable scope’un ötesindeki daha geniş vizyonu göstermek için yer alır. Bugün en güvenilir akış React TSX/JSX + attribute DSL + Vitest/Playwright kombinasyonudur.
 
 1. **Use descriptive test IDs**: `data-test-id="login-email-input"` is better than `data-test-id="input1"`
 

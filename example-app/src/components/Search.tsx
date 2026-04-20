@@ -82,7 +82,7 @@ export function Search({ onSearch }: SearchProps) {
             placeholder="Enter search query..."
             className="search-input"
             data-test-id="search-input"
-            data-test-step="type:hello; key:Enter"
+            data-test-step="type:hello"
           />
           <button
             type="submit"

@@ -1,12 +1,8 @@
-import { useState } from "react";
-import { Login, Search } from "./components";
+import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { ContactForm, Login, ModalDemo, Search } from "./components";
 import "./App.css";
 
-type View = "login" | "search";
-
 function App() {
-  const [currentView, setCurrentView] = useState<View>("login");
-
   return (
     <div className="app">
       <header className="app-header">
@@ -18,30 +14,42 @@ function App() {
       </header>
 
       <nav className="app-nav">
-        <button
-          className={currentView === "login" ? "active" : ""}
-          onClick={() => setCurrentView("login")}
-        >
+        <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/login">
           Login Demo
-        </button>
-        <button
-          className={currentView === "search" ? "active" : ""}
-          onClick={() => setCurrentView("search")}
-        >
+        </NavLink>
+        <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/search">
           Search Demo
-        </button>
+        </NavLink>
+        <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/contact">
+          Contact Demo
+        </NavLink>
+        <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/modal">
+          Modal Demo
+        </NavLink>
       </nav>
 
       <main className="app-main">
-        {currentView === "login" && (
-          <Login
-            onSuccess={(email) => console.log("Login successful:", email)}
-            onError={(error) => console.log("Login error:", error)}
+        <Routes>
+          <Route path="/" element={<Navigate replace to="/login" />} />
+          <Route
+            path="/login"
+            element={
+              <Login
+                onSuccess={(email) => console.log("Login successful:", email)}
+                onError={(error) => console.log("Login error:", error)}
+              />
+            }
           />
-        )}
-        {currentView === "search" && (
-          <Search onSearch={(query) => console.log("Searching for:", query)} />
-        )}
+          <Route
+            path="/search"
+            element={<Search onSearch={(query) => console.log("Searching for:", query)} />}
+          />
+          <Route
+            path="/contact"
+            element={<ContactForm onSubmit={(data) => console.log("Contact submitted:", data)} />}
+          />
+          <Route path="/modal" element={<ModalDemo />} />
+        </Routes>
       </main>
 
       <footer className="app-footer">

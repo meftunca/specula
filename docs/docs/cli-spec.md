@@ -7,7 +7,17 @@ description: TestWeaver CLI aracı (testweaver) komutları ve konfigürasyonu
 ---
 
 
-Bu doküman, test üretim sisteminin komut satırı aracı olan `testgen`’in davranışını, komutlarını ve konfigürasyon formatını tanımlar.
+Bu doküman, test üretim sisteminin komut satırı aracı için **hedef spesifikasyonu** tanımlar.
+
+> **Mevcut implementasyon notu:** Kod tabanındaki çalışan CLI şu anda `testweaver` adını kullanır ve React-first bir kapsamla ilerler.
+>
+> Bugün stabil olan parçalar:
+> - React TSX/JSX source scan
+> - Attribute DSL
+> - `generate`, `validate`, `watch`
+> - Vitest + Playwright output
+>
+> Aşağıdaki bölümlerin bir kısmı ise uzun vadeli hedef davranışı anlatır; mevcut implementasyonla birebir aynı olmayabilir.
 
 ---
 

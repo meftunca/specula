@@ -1,20 +1,46 @@
 # TestWeaver - Context-Based Automatic Test Generation System
 
-This repository contains the design specifications and implementation of **TestWeaver**, a context-based automatic test generation system for React / Svelte / Vue / plain HTML projects.
+This repository contains the design specifications and implementation of **TestWeaver**.
+
+**Bugünkü stabil kapsam:**
+
+- React **TSX/JSX** kaynak dosyalarını parse eder
+- Attribute tabanlı DSL (`data-test-*`) üzerinden IR üretir
+- **Vitest + React Testing Library** testleri generate eder
+- **Playwright** E2E testleri generate eder
+- DSL validation ve IR validation sunar
+
+**Planlanan ama henüz stabil olmayan alanlar:**
+
+- Vue / Svelte / plain HTML parser desteği
+- Comment macro DSL
+- Unit / logic DSL genişlemesi
 
 ## Overview
 
-The system consists of three main testing layers:
+TestWeaver’ın bugünkü odağı iki ana test çıktısıdır:
 
 1. **UI / Component Tests**
-2. **Unit Tests** (component/logic focused)
-3. **E2E (Automation) Tests**
+2. **E2E (Automation) Tests**
 
 Core concept:
 
-- Use **minimal directives** (data-* attributes and comment macros) in UI code
+- Use **minimal directives** (`data-test-*` attributes) in UI code
 - Generate an **IR (Intermediate Representation)** from source code
-- Generate **test files** for different test types (unit, UI, E2E) from the IR
+- Generate **test files** for Vitest and Playwright from the IR
+
+---
+
+## Current Stable Scope
+
+Today, TestWeaver should be treated as a **React-first generator**.
+
+- Stable input: React TSX / JSX files
+- Stable DSL source: attribute-based DSL
+- Stable generators: Vitest + Playwright
+- Stable CLI commands: `generate`, `validate`, `watch`
+
+The broader repository docs still describe the long-term architecture and roadmap, but the codebase currently centers on the React implementation above.
 
 ---
 
@@ -82,6 +108,9 @@ node dist/cli/index.js validate
 # Validate with strict mode (treat warnings as errors)
 node dist/cli/index.js validate --strict
 
+# Emit machine-readable validation output
+node dist/cli/index.js validate --format json
+
 # Use a custom config file
 node dist/cli/index.js generate --config ./my-config.json
 ```
@@ -139,6 +168,7 @@ Validate DSL usage and report errors/warnings.
 **Options:**
 - `-c, --config <path>` — Path to config file
 - `--strict` — Treat warnings as errors
+- `--format <type>` — Validation output format: `text` or `json`
 
 **Example:**
 ```bash
@@ -147,6 +177,9 @@ node dist/cli/index.js validate
 
 # With strict mode
 node dist/cli/index.js validate --strict
+
+# JSON output for CI or scripts
+node dist/cli/index.js validate --format json
 ```
 
 **Sample Output (with errors):**
@@ -156,11 +189,12 @@ node dist/cli/index.js validate --strict
 [INFO] Found 1 source file(s)
 [INFO] Validating DSL usage...
 
-[ERROR] src/InvalidComponent.tsx:11: Invalid action "tap". Supported: click, type, change, focus, blur, key, custom, waitFor, submitContext
-[ERROR] src/InvalidComponent.tsx:15: Invalid action "swipe". Supported: click, type, change, focus, blur, key, custom, waitFor, submitContext
-[ERROR] src/InvalidComponent.tsx:19: Invalid expectation type "invalid-type". Supported: visible, not-visible, exists, not-exists, text, exact-text, value, has-class, not-has-class, aria, url-contains, url-exact, snapshot, custom
+[ERROR] src/InvalidComponent.tsx:11:18 [invalid-action] Invalid action "tap". Supported: click, type, change, focus, blur, key, select, hover, clear, custom, waitFor, submitContext
+  suggestion: Use one of the supported actions or move unsupported behavior into a custom action.
+[WARNING] src/InvalidComponent.tsx:11:18 [step-missing-selector] Step is missing a selector. Add one of: data-test-id, data-test-role, data-test-label, or data-test-placeholder.
+  suggestion: Attach a stable selector so generated tests know which element to target.
 
-Validation complete: 3 error(s), 0 warning(s), 0 info message(s)
+Validation complete: 1 error(s), 1 warning(s), 0 info message(s)
 [ERROR] Validation failed (errors found)
 ```
 
@@ -259,8 +293,11 @@ The example app demonstrates how to use TestWeaver DSL attributes:
 - `click` — Click an element
 - `type:value` — Type text into an input
 - `change:value` — Fire a change event with value
+- `select:value` — Select an option
 - `focus` — Focus an element
 - `blur` — Blur an element
+- `hover` — Hover an element
+- `clear` — Clear the current value
 - `key:KeyName` — Press a key
 - `waitFor` — Wait for an element
 - `submitContext` — Submit a form
@@ -294,14 +331,19 @@ describe("login", () => {
   it("happy-path", async () => {
     render(<Login />);
 
+    const email = () => screen.getByTestId("email");
+    const password = () => screen.getByTestId("password");
+    const submit = () => screen.getByTestId("submit");
+    const successMessage = () => screen.getByTestId("success-message");
+
     // Steps
-    fireEvent.change(screen.getByTestId("email"), { target: { value: "user@example.com" } });
-    fireEvent.change(screen.getByTestId("password"), { target: { value: "123456" } });
-    fireEvent.click(screen.getByTestId("submit"));
+    fireEvent.change(email(), { target: { value: "user@example.com" } });
+    fireEvent.change(password(), { target: { value: "123456" } });
+    fireEvent.click(submit());
 
     // Expectations
-    expect(screen.getByTestId("success-message")).toBeVisible();
-    expect(screen.getByTestId("success-message")).toHaveTextContent("Welcome");
+    expect(successMessage()).toBeVisible();
+    expect(successMessage()).toHaveTextContent("Welcome");
   });
 });
 ```
@@ -317,14 +359,19 @@ test.describe("login", () => {
   test("happy-path", async ({ page }) => {
     await page.goto("/login");
 
+    const email = page.locator('[data-test-id="email"]');
+    const password = page.locator('[data-test-id="password"]');
+    const submit = page.locator('[data-test-id="submit"]');
+    const successMessage = page.locator('[data-test-id="success-message"]');
+
     // Steps
-    await page.locator('[data-test-id="email"]').fill("user@example.com");
-    await page.locator('[data-test-id="password"]').fill("123456");
-    await page.locator('[data-test-id="submit"]').click();
+    await email.fill("user@example.com");
+    await password.fill("123456");
+    await submit.click();
 
     // Expectations
-    await expect(page.locator('[data-test-id="success-message"]')).toBeVisible();
-    await expect(page.locator('[data-test-id="success-message"]')).toContainText("Welcome");
+    await expect(successMessage).toBeVisible();
+    await expect(successMessage).toContainText("Welcome");
   });
 });
 ```
@@ -336,7 +383,7 @@ test.describe("login", () => {
 - `01-system-overview.md` — High-level architecture and flow
 - `02-dsl-spec.md` — Attribute and comment-based DSL specification
 - `03-ir-spec.md` — IR (Intermediate Representation) schema
-- `04-generators-spec.md` — IR → Jest / Vitest / Cypress / Playwright mappings
+- `04-generators-spec.md` — IR → runner mapping vision and current generators
 - `05-cli-tool-spec.md` — CLI tool and configuration format
 - `06-implementation-plan.md` — Implementation phases, technologies, and roadmap
 

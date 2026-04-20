@@ -87,6 +87,8 @@ export interface TestCase {
   context: string;
   /** Scenario name (e.g., "happy-path") */
   scenario: string;
+  /** Optional UI state / branch name (e.g., "success", "error", "loading") */
+  state?: string;
   /** Test type: UI, unit, or E2E */
   type: TestCaseType;
   /** Route for E2E tests (e.g., "/login") */

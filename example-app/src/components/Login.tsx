@@ -74,8 +74,6 @@ export function Login({ onSuccess, onError }: LoginProps) {
           {error && (
             <div
               className="error-message"
-              data-test-id="error-message"
-              data-test-expect="visible"
             >
               {error}
             </div>

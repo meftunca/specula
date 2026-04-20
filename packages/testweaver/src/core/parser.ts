@@ -9,7 +9,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse as babelParse } from "@babel/parser";
 import traverse from "@babel/traverse";
-import type { JSXAttribute, JSXOpeningElement, Node } from "@babel/types";
+import type {
+  JSXAttribute,
+  JSXElement,
+  JSXFragment,
+  JSXOpeningElement,
+  JSXSpreadChild,
+  Node,
+} from "@babel/types";
 import type {
   TestSuite,
   TestCase,
@@ -28,6 +35,7 @@ import type {
 const DSL_ATTRS = {
   CONTEXT: "data-test-context",
   SCENARIO: "data-test-scenario",
+  STATE: "data-test-state",
   ROUTE: "data-test-route",
   ID: "data-test-id",
   STEP: "data-test-step",
@@ -47,6 +55,24 @@ interface ParsedStep {
 }
 
 /**
+ * Lowercase aliases for supported step actions
+ */
+const STEP_ACTION_ALIASES: Record<string, StepAction> = {
+  click: "click",
+  type: "type",
+  change: "change",
+  focus: "focus",
+  blur: "blur",
+  key: "key",
+  select: "select",
+  hover: "hover",
+  clear: "clear",
+  custom: "custom",
+  waitfor: "waitFor",
+  submitcontext: "submitContext",
+};
+
+/**
  * Parsed expectation from DSL
  */
 interface ParsedExpectation {
@@ -60,7 +86,9 @@ interface ParsedExpectation {
 interface ContextElementData {
   context: string;
   scenario?: string;
+  state?: string;
   route?: string;
+  componentName?: string;
   location: LocationRef;
   children: ChildElementData[];
 }
@@ -76,6 +104,57 @@ interface ChildElementData {
   steps: ParsedStep[];
   expectations: ParsedExpectation[];
   location: LocationRef;
+}
+
+type TraversableJsxChild = JSXElement | JSXFragment | JSXSpreadChild;
+
+/**
+ * Checks whether a name looks like a React component export.
+ */
+function isComponentName(name: string): boolean {
+  return /^[A-Z][a-zA-Z0-9]*$/.test(name);
+}
+
+/**
+ * Attempts to infer the owning React component name for a JSX context node.
+ */
+function inferComponentName(
+  jsxPath: {
+    findParent: (predicate: (parentPath: { node: Node; isFunctionDeclaration: () => boolean; isVariableDeclarator: () => boolean; }) => boolean) => { node: Node } | null;
+  }
+): string | undefined {
+  const componentPath = jsxPath.findParent((parentPath) => {
+    const node = parentPath.node;
+
+    if (parentPath.isFunctionDeclaration()) {
+      return node.type === "FunctionDeclaration" && node.id != null && isComponentName(node.id.name);
+    }
+
+    if (parentPath.isVariableDeclarator()) {
+      return (
+        node.type === "VariableDeclarator" &&
+        node.id.type === "Identifier" &&
+        isComponentName(node.id.name)
+      );
+    }
+
+    return false;
+  });
+
+  if (componentPath === null) {
+    return undefined;
+  }
+
+  const { node } = componentPath;
+  if (node.type === "FunctionDeclaration") {
+    return node.id?.name;
+  }
+
+  if (node.type === "VariableDeclarator" && node.id.type === "Identifier") {
+    return node.id.name;
+  }
+
+  return undefined;
 }
 
 /**
@@ -151,8 +230,8 @@ function parseStepDsl(dsl: string): ParsedStep[] {
     const colonIndex = part.indexOf(":");
     if (colonIndex === -1) {
       // Simple action without value
-      const action = part.toLowerCase();
-      if (isValidStepAction(action)) {
+      const action = normalizeStepAction(part);
+      if (action !== null) {
         steps.push({ action });
       } else {
         // Unknown action, treat as custom
@@ -160,9 +239,9 @@ function parseStepDsl(dsl: string): ParsedStep[] {
       }
     } else {
       // Action with value
-      const action = part.substring(0, colonIndex).trim().toLowerCase();
+      const action = normalizeStepAction(part.substring(0, colonIndex).trim());
       const value = part.substring(colonIndex + 1).trim();
-      if (isValidStepAction(action)) {
+      if (action !== null) {
         steps.push({ action, value });
       } else {
         // Unknown action, treat as custom
@@ -175,24 +254,11 @@ function parseStepDsl(dsl: string): ParsedStep[] {
 }
 
 /**
- * Checks if a string is a valid step action
+ * Normalizes a step action string to a valid StepAction
  */
-function isValidStepAction(action: string): action is StepAction {
-  const validActions: StepAction[] = [
-    "click",
-    "type",
-    "change",
-    "focus",
-    "blur",
-    "key",
-    "select",
-    "hover",
-    "clear",
-    "custom",
-    "waitFor",
-    "submitContext",
-  ];
-  return validActions.includes(action as StepAction);
+function normalizeStepAction(action: string): StepAction | null {
+  const normalized = action.toLowerCase().replace(/[_-]/g, "");
+  return STEP_ACTION_ALIASES[normalized] ?? null;
 }
 
 /**
@@ -310,10 +376,125 @@ function createSelectorFromAttrs(attrs: SelectorAttrs): Selector | undefined {
 }
 
 /**
+ * Collects DSL-bearing descendant elements for a context, excluding nested contexts.
+ */
+function collectContextChildren(
+  filePath: string,
+  rootElement: JSXElement | JSXFragment
+): ChildElementData[] {
+  const collected: ChildElementData[] = [];
+
+  const visitEmbeddedJsx = (value: unknown): void => {
+    if (value === null || value === undefined) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visitEmbeddedJsx(item);
+      }
+      return;
+    }
+
+    if (typeof value !== "object") {
+      return;
+    }
+
+    const candidate = value as { type?: string };
+    if (candidate.type === "JSXElement" || candidate.type === "JSXFragment" || candidate.type === "JSXSpreadChild") {
+      visitNode(candidate as TraversableJsxChild);
+      return;
+    }
+
+    for (const nestedValue of Object.values(value)) {
+      visitEmbeddedJsx(nestedValue);
+    }
+  };
+
+  const visitNode = (node: TraversableJsxChild): void => {
+    if (node.type === "JSXSpreadChild") {
+      return;
+    }
+
+    if (node.type === "JSXFragment") {
+      for (const child of node.children) {
+        visitEmbeddedJsx(child);
+      }
+      return;
+    }
+
+    const openingElement = node.openingElement;
+
+    if (extractAttribute(openingElement, DSL_ATTRS.CONTEXT) !== undefined) {
+      return;
+    }
+
+    const testId = extractAttribute(openingElement, DSL_ATTRS.ID);
+    const roleAttr = extractAttribute(openingElement, DSL_ATTRS.ROLE);
+    const labelAttr = extractAttribute(openingElement, DSL_ATTRS.LABEL);
+    const placeholderAttr = extractAttribute(openingElement, DSL_ATTRS.PLACEHOLDER);
+    const stepDsl = extractAttribute(openingElement, DSL_ATTRS.STEP);
+    const expectDsl = extractAttribute(openingElement, DSL_ATTRS.EXPECT);
+
+    const hasSelector =
+      testId !== undefined ||
+      roleAttr !== undefined ||
+      labelAttr !== undefined ||
+      placeholderAttr !== undefined;
+
+    if (hasSelector || stepDsl !== undefined || expectDsl !== undefined) {
+      const childData: ChildElementData = {
+        steps: stepDsl !== undefined ? parseStepDsl(stepDsl) : [],
+        expectations: expectDsl !== undefined ? parseExpectDsl(expectDsl) : [],
+        location: createLocationRef(
+          filePath,
+          openingElement,
+          testId ?? roleAttr ?? labelAttr ?? placeholderAttr ?? stepDsl ?? expectDsl
+        ),
+      };
+
+      if (testId !== undefined) {
+        childData.testId = testId;
+      }
+      if (roleAttr !== undefined) {
+        childData.role = roleAttr;
+      }
+      if (labelAttr !== undefined) {
+        childData.label = labelAttr;
+      }
+      if (placeholderAttr !== undefined) {
+        childData.placeholder = placeholderAttr;
+      }
+
+      collected.push(childData);
+    }
+
+    for (const child of node.children) {
+      visitEmbeddedJsx(child);
+    }
+  };
+
+  if (rootElement.type === "JSXFragment") {
+    for (const child of rootElement.children) {
+      visitEmbeddedJsx(child);
+    }
+    return collected;
+  }
+
+  for (const child of rootElement.children) {
+    visitEmbeddedJsx(child);
+  }
+
+  return collected;
+}
+
+/**
  * Generates a stable ID for a test case
  */
-function generateCaseId(context: string, scenario: string): string {
-  return `${context}__${scenario}`;
+function generateCaseId(context: string, scenario: string, state?: string): string {
+  return state !== undefined && state.length > 0
+    ? `${context}__${scenario}__${state}`
+    : `${context}__${scenario}`;
 }
 
 /**
@@ -384,6 +565,7 @@ export function scanFile(filePath: string): TestSuite[] {
       }
 
       const scenario = extractAttribute(jsxPath.node, DSL_ATTRS.SCENARIO);
+      const state = extractAttribute(jsxPath.node, DSL_ATTRS.STATE);
       const route = extractAttribute(jsxPath.node, DSL_ATTRS.ROUTE);
 
       const contextData: ContextElementData = {
@@ -391,59 +573,23 @@ export function scanFile(filePath: string): TestSuite[] {
         location: createLocationRef(filePath, jsxPath.node, `context=${context}`),
         children: [],
       };
+      const componentName = inferComponentName(jsxPath);
+      if (componentName !== undefined) {
+        contextData.componentName = componentName;
+      }
       if (scenario !== undefined) {
         contextData.scenario = scenario;
+      }
+      if (state !== undefined) {
+        contextData.state = state;
       }
       if (route !== undefined) {
         contextData.route = route;
       }
 
-      // Get the parent JSXElement to traverse its children
-      const parentPath = jsxPath.parentPath;
-      if (parentPath?.type === "JSXElement") {
-        // Traverse children looking for DSL attributes
-        parentPath.traverse({
-          JSXOpeningElement(childPath) {
-            // Skip the context element itself
-            if (childPath.node === jsxPath.node) {
-              return;
-            }
-
-            const testId = extractAttribute(childPath.node, DSL_ATTRS.ID);
-            const roleAttr = extractAttribute(childPath.node, DSL_ATTRS.ROLE);
-            const labelAttr = extractAttribute(childPath.node, DSL_ATTRS.LABEL);
-            const placeholderAttr = extractAttribute(childPath.node, DSL_ATTRS.PLACEHOLDER);
-            const stepDsl = extractAttribute(childPath.node, DSL_ATTRS.STEP);
-            const expectDsl = extractAttribute(childPath.node, DSL_ATTRS.EXPECT);
-
-            // Only collect if there's at least one DSL attribute
-            const hasSelector = testId !== undefined || roleAttr !== undefined || labelAttr !== undefined || placeholderAttr !== undefined;
-            if (hasSelector || stepDsl !== undefined || expectDsl !== undefined) {
-              const childData: ChildElementData = {
-                steps: stepDsl !== undefined ? parseStepDsl(stepDsl) : [],
-                expectations: expectDsl !== undefined ? parseExpectDsl(expectDsl) : [],
-                location: createLocationRef(
-                  filePath,
-                  childPath.node,
-                  testId ?? roleAttr ?? labelAttr ?? placeholderAttr ?? stepDsl ?? expectDsl
-                ),
-              };
-              if (testId !== undefined) {
-                childData.testId = testId;
-              }
-              if (roleAttr !== undefined) {
-                childData.role = roleAttr;
-              }
-              if (labelAttr !== undefined) {
-                childData.label = labelAttr;
-              }
-              if (placeholderAttr !== undefined) {
-                childData.placeholder = placeholderAttr;
-              }
-              contextData.children.push(childData);
-            }
-          },
-        });
+      const parentNode = jsxPath.parent;
+      if (parentNode?.type === "JSXElement") {
+        contextData.children = collectContextChildren(filePath, parentNode);
       }
 
       contextElements.push(contextData);
@@ -455,7 +601,7 @@ export function scanFile(filePath: string): TestSuite[] {
   const suiteMap = new Map<string, TestSuite>();
 
   for (const contextData of contextElements) {
-    const { context, scenario, route, location, children } = contextData;
+    const { context, scenario, state, route, componentName, location, children } = contextData;
 
     // Get or create the suite for this context
     let suite = suiteMap.get(context);
@@ -479,14 +625,21 @@ export function scanFile(filePath: string): TestSuite[] {
     // Build the test case
     const scenarioName = scenario ?? "default";
     const testCase: TestCase = {
-      id: generateCaseId(context, scenarioName),
+      id: generateCaseId(context, scenarioName, state),
       context,
       scenario: scenarioName,
+      ...(state !== undefined ? { state } : {}),
       type: route !== undefined ? "e2e" : "ui",
       definedAt: [location],
       steps: [],
       expectations: [],
     };
+    if (componentName !== undefined) {
+      testCase.meta = {
+        componentName,
+        importPath: filePath,
+      };
+    }
     if (route !== undefined) {
       testCase.route = route;
     }

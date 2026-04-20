@@ -2,13 +2,25 @@
  * Tests for the TestWeaver parser
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import * as path from "node:path";
 import { scanFile } from "../core/parser.js";
 import type { TestSuite } from "../types/ir.js";
 
 // Path to the mock Login component for testing (relative to this test file)
 const mockLoginPath = path.resolve(__dirname, "./fixtures/MockLogin.tsx");
+const mockEdgeCasesPath = path.resolve(
+  __dirname,
+  "./fixtures/MockParserEdgeCases.tsx"
+);
+const mockMultiComponentPath = path.resolve(
+  __dirname,
+  "./fixtures/MockMultiComponent.tsx"
+);
+const mockStatefulFlowPath = path.resolve(
+  __dirname,
+  "./fixtures/MockStatefulFlow.tsx"
+);
 
 describe("Parser", () => {
   describe("scanFile", () => {
@@ -108,6 +120,116 @@ describe("Parser", () => {
         expect(step?.source?.filePath).toContain("MockLogin.tsx");
         expect(step?.source?.line).toBeGreaterThan(0);
         expect(step?.source?.via).toBe("attribute");
+      });
+
+      it("should infer the owning component metadata", () => {
+        expect(suites[0]?.cases[0]?.meta?.componentName).toBe("MockLogin");
+        expect(suites[0]?.cases[0]?.meta?.importPath).toContain("MockLogin.tsx");
+      });
+    });
+
+    describe("edge cases", () => {
+      let edgeSuites: TestSuite[];
+
+      beforeAll(() => {
+        edgeSuites = scanFile(mockEdgeCasesPath);
+      });
+
+      it("should extract nested contexts as separate suites without leaking child steps", () => {
+        expect(edgeSuites).toHaveLength(2);
+
+        const parentSuite = edgeSuites.find((suite) => suite.context === "search");
+        const nestedSuite = edgeSuites.find(
+          (suite) => suite.context === "search-filters"
+        );
+
+        expect(parentSuite).toBeDefined();
+        expect(nestedSuite).toBeDefined();
+
+        const parentStepSelectors = parentSuite?.cases[0]?.steps.map(
+          (step) => step.selector.value
+        );
+        expect(parentStepSelectors).not.toContain("open-filters");
+
+        expect(nestedSuite?.cases[0]?.steps).toHaveLength(1);
+        expect(nestedSuite?.cases[0]?.steps[0]?.selector.value).toBe("open-filters");
+      });
+
+      it("should normalize special step actions like waitFor and submitContext", () => {
+        const parentSuite = edgeSuites.find((suite) => suite.context === "search");
+        const actions = parentSuite?.cases[0]?.steps.map((step) => step.action) ?? [];
+
+        expect(actions).toContain("waitFor");
+        expect(actions).toContain("submitContext");
+      });
+
+      it("should respect selector precedence and fallback order", () => {
+        const parentSuite = edgeSuites.find((suite) => suite.context === "search");
+        const steps = parentSuite?.cases[0]?.steps ?? [];
+
+        expect(steps[0]?.selector).toEqual({ type: "role", value: "searchbox" });
+        expect(steps[2]?.selector).toEqual({ type: "labelText", value: "Apply filters" });
+        expect(steps[3]?.selector).toEqual({ type: "placeholder", value: "Search products" });
+        expect(steps[4]?.selector).toEqual({ type: "testId", value: "priority-button" });
+      });
+
+      it("should keep selector-less URL expectations", () => {
+        const parentSuite = edgeSuites.find((suite) => suite.context === "search");
+        const expectations = parentSuite?.cases[0]?.expectations ?? [];
+
+        expect(expectations).toHaveLength(1);
+        expect(expectations[0]).toMatchObject({
+          type: "url-contains",
+          value: "/search/results",
+        });
+        expect(expectations[0]?.selector).toBeUndefined();
+      });
+
+      it("should warn and skip steps that do not have any selector", () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+        const warnedSuites = scanFile(mockEdgeCasesPath);
+        const parentSuite = warnedSuites.find((suite) => suite.context === "search");
+        const selectorValues = parentSuite?.cases[0]?.steps.map(
+          (step) => step.selector.value
+        ) ?? [];
+
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(selectorValues).not.toContain("");
+
+        warnSpy.mockRestore();
+      });
+
+      it("should produce deterministic output for repeated scans", () => {
+        const first = scanFile(mockEdgeCasesPath);
+        const second = scanFile(mockEdgeCasesPath);
+
+        expect(second).toEqual(first);
+      });
+
+      it("should infer the correct component for each exported context owner", () => {
+        const multiSuites = scanFile(mockMultiComponentPath);
+        const alphaSuite = multiSuites.find((suite) => suite.context === "alpha");
+        const betaSuite = multiSuites.find((suite) => suite.context === "beta");
+
+        expect(alphaSuite?.cases[0]?.meta?.componentName).toBe("AlphaPanel");
+        expect(betaSuite?.cases[0]?.meta?.componentName).toBe("BetaPanel");
+      });
+
+      it("should preserve UI state as separate cases for repeated scenarios", () => {
+        const statefulSuites = scanFile(mockStatefulFlowPath);
+        const loginSuite = statefulSuites.find((suite) => suite.context === "login");
+
+        expect(loginSuite).toBeDefined();
+        expect(loginSuite?.cases).toHaveLength(2);
+
+        const successCase = loginSuite?.cases.find((testCase) => testCase.state === "success");
+        const errorCase = loginSuite?.cases.find((testCase) => testCase.state === "error");
+
+        expect(successCase?.id).toBe("login__submit__success");
+        expect(errorCase?.id).toBe("login__submit__error");
+        expect(successCase?.expectations.map((expectation) => expectation.selector?.value)).toContain("success-banner");
+        expect(errorCase?.expectations.map((expectation) => expectation.selector?.value)).toContain("error-banner");
       });
     });
   });

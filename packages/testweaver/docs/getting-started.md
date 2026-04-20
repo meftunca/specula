@@ -2,6 +2,10 @@
 
 This guide walks you through setting up TestWeaver and generating your first tests.
 
+> **Current stable scope:** React TSX/JSX + attribute DSL + Vitest + Playwright.
+>
+> Vue/Svelte support and comment macro DSL are planned roadmap items, not current stable features.
+
 ## Prerequisites
 
 - Node.js 18.0.0 or higher
@@ -201,13 +205,19 @@ testweaver validate
 This catches common errors like:
 - Invalid action names
 - Invalid expectation types
-- Missing test IDs
+- Missing selectors
 - Duplicate IDs
 
 Use `--strict` to treat warnings as errors:
 
 ```bash
 testweaver validate --strict
+```
+
+For CI or custom scripts, use JSON output:
+
+```bash
+testweaver validate --format json
 ```
 
 ## Watch Mode

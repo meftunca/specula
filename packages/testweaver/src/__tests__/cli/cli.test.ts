@@ -11,6 +11,12 @@ import * as path from "node:path";
 const testweaverRoot = path.resolve(__dirname, "../../../");
 const fixturesDir = path.resolve(__dirname, "../fixtures");
 const testOutputDir = path.resolve(fixturesDir, "__test_generated__");
+const invalidFixturePath = path.resolve(fixturesDir, "__invalid_validate__.tsx");
+const invalidConfigPath = path.resolve(fixturesDir, "testweaver.invalid.config.json");
+const branchFixturePath = path.resolve(fixturesDir, "__duplicate_branch__.tsx");
+const branchConfigPath = path.resolve(fixturesDir, "testweaver.branch.config.json");
+const stateFixturePath = path.resolve(fixturesDir, "__stateful_branch__.tsx");
+const stateConfigPath = path.resolve(fixturesDir, "testweaver.stateful.config.json");
 
 // CLI path
 const cliPath = path.resolve(testweaverRoot, "dist/cli/index.js");
@@ -18,13 +24,28 @@ const cliPath = path.resolve(testweaverRoot, "dist/cli/index.js");
 // Create a temporary config file for tests
 const testConfigPath = path.resolve(fixturesDir, "testweaver.config.json");
 const testConfig = {
-  sourceGlobs: ["*.tsx"],
+  sourceGlobs: ["MockLogin.tsx"],
+  outputDir: "__test_generated__",
+};
+
+const invalidValidateConfig = {
+  sourceGlobs: [path.basename(invalidFixturePath)],
+  outputDir: "__test_generated__",
+};
+
+const branchConfig = {
+  sourceGlobs: [path.basename(branchFixturePath)],
+  outputDir: "__test_generated__",
+};
+
+const stateConfig = {
+  sourceGlobs: [path.basename(stateFixturePath)],
   outputDir: "__test_generated__",
 };
 
 describe("CLI", () => {
   beforeAll(() => {
-    // Ensure the CLI is built
+    // Build if needed. Full test runs already build before invoking vitest.
     if (!fs.existsSync(cliPath)) {
       execSync("npm run build", { cwd: testweaverRoot });
     }
@@ -36,6 +57,59 @@ describe("CLI", () => {
 
     // Create test config file
     fs.writeFileSync(testConfigPath, JSON.stringify(testConfig, null, 2));
+    fs.writeFileSync(
+      invalidFixturePath,
+      `
+      export function InvalidValidateFixture() {
+        return (
+          <div data-test-context="invalid" data-test-scenario="broken">
+            <button data-test-step="tap" />
+          </div>
+        );
+      }
+      `
+    );
+    fs.writeFileSync(invalidConfigPath, JSON.stringify(invalidValidateConfig, null, 2));
+    fs.writeFileSync(
+      branchFixturePath,
+      `
+      export function BranchFlow() {
+        return (
+          <>
+            <section data-test-context="checkout" data-test-scenario="happy-path">
+              <button data-test-id="submit-order" data-test-step="click">Submit</button>
+            </section>
+            <section data-test-context="checkout" data-test-scenario="happy-path">
+              <div data-test-id="success-banner" data-test-expect="visible; text:Order complete">
+                Order complete
+              </div>
+            </section>
+          </>
+        );
+      }
+      `
+    );
+    fs.writeFileSync(branchConfigPath, JSON.stringify(branchConfig, null, 2));
+    fs.writeFileSync(
+      stateFixturePath,
+      `
+      export function StatefulBranchFlow() {
+        return (
+          <>
+            <section data-test-context="checkout" data-test-scenario="submit-order" data-test-state="success">
+              <button data-test-id="submit-order" data-test-step="click">Submit</button>
+              <div data-test-id="success-banner" data-test-expect="visible; text:Order complete">Order complete</div>
+            </section>
+            <section data-test-context="checkout" data-test-scenario="submit-order" data-test-state="error">
+              <button data-test-id="submit-order" data-test-step="click">Submit</button>
+              <div data-test-id="error-banner" data-test-expect="visible; text:Payment failed">Payment failed</div>
+            </section>
+          </>
+        );
+      }
+      `
+    );
+    fs.writeFileSync(stateConfigPath, JSON.stringify(stateConfig, null, 2));
   });
 
   afterAll(() => {
@@ -46,6 +120,24 @@ describe("CLI", () => {
     // Clean up test config
     if (fs.existsSync(testConfigPath)) {
       fs.rmSync(testConfigPath);
+    }
+    if (fs.existsSync(invalidFixturePath)) {
+      fs.rmSync(invalidFixturePath);
+    }
+    if (fs.existsSync(invalidConfigPath)) {
+      fs.rmSync(invalidConfigPath);
+    }
+    if (fs.existsSync(branchFixturePath)) {
+      fs.rmSync(branchFixturePath);
+    }
+    if (fs.existsSync(branchConfigPath)) {
+      fs.rmSync(branchConfigPath);
+    }
+    if (fs.existsSync(stateFixturePath)) {
+      fs.rmSync(stateFixturePath);
+    }
+    if (fs.existsSync(stateConfigPath)) {
+      fs.rmSync(stateConfigPath);
     }
   });
 
@@ -150,6 +242,41 @@ describe("CLI", () => {
       // File should not have been modified (same content)
       expect(newMtime).toBe(initialMtime);
     });
+
+    it("should merge duplicate context and scenario branches into one generated file", () => {
+      execSync(`node ${cliPath} generate --config ${branchConfigPath}`, {
+        cwd: fixturesDir,
+        encoding: "utf-8",
+      });
+
+      const vitestFilePath = path.join(testOutputDir, "vitest", "checkout.happy-path.test.tsx");
+      const content = fs.readFileSync(vitestFilePath, "utf-8");
+
+      expect(content).toContain('import { BranchFlow } from "../../__duplicate_branch__.tsx";');
+      expect(content).toContain("fireEvent.click(submitOrder());");
+      expect(content).toContain('expect(successBanner()).toHaveTextContent("Order complete");');
+    });
+
+    it("should generate separate files for state-tagged scenario branches", () => {
+      execSync(`node ${cliPath} generate --config ${stateConfigPath}`, {
+        cwd: fixturesDir,
+        encoding: "utf-8",
+      });
+
+      const successFilePath = path.join(testOutputDir, "vitest", "checkout.submit-order.success.test.tsx");
+      const errorFilePath = path.join(testOutputDir, "vitest", "checkout.submit-order.error.test.tsx");
+
+      expect(fs.existsSync(successFilePath)).toBe(true);
+      expect(fs.existsSync(errorFilePath)).toBe(true);
+
+      const successContent = fs.readFileSync(successFilePath, "utf-8");
+      const errorContent = fs.readFileSync(errorFilePath, "utf-8");
+
+      expect(successContent).toContain('it("submit-order (success)", async () => {');
+      expect(successContent).toContain('expect(successBanner()).toHaveTextContent("Order complete");');
+      expect(errorContent).toContain('it("submit-order (error)", async () => {');
+      expect(errorContent).toContain('expect(errorBanner()).toHaveTextContent("Payment failed");');
+    });
   });
 
   describe("version and help", () => {
@@ -170,6 +297,61 @@ describe("CLI", () => {
       expect(result).toContain("generate");
       expect(result).toContain("scan");
       expect(result).toContain("validate");
+    });
+  });
+
+  describe("validate command", () => {
+    it("should display help for validate command", () => {
+      const result = execSync(`node ${cliPath} validate --help`, {
+        encoding: "utf-8",
+      });
+
+      expect(result).toContain("Validate DSL usage and IR");
+      expect(result).toContain("--strict");
+      expect(result).toContain("--format <type>");
+    });
+
+    it("should print helpful text validation output", () => {
+      let output = "";
+
+      try {
+        execSync(`node ${cliPath} validate --config ${invalidConfigPath}`, {
+          cwd: fixturesDir,
+          encoding: "utf-8",
+          stdio: "pipe",
+        });
+      } catch (error) {
+        output = String((error as { stdout?: string }).stdout ?? "");
+      }
+
+      expect(output).toContain("[ERROR]");
+      expect(output).toContain("[invalid-action]");
+      expect(output).toContain("suggestion:");
+    });
+
+    it("should print JSON validation output when requested", () => {
+      let output = "";
+
+      try {
+        execSync(`node ${cliPath} validate --config ${invalidConfigPath} --format json`, {
+          cwd: fixturesDir,
+          encoding: "utf-8",
+          stdio: "pipe",
+        });
+      } catch (error) {
+        output = String((error as { stdout?: string }).stdout ?? "");
+      }
+
+      const parsed = JSON.parse(output) as {
+        valid: boolean;
+        errorCount: number;
+        messages: Array<{ ruleId: string; suggestion?: string }>;
+      };
+
+      expect(parsed.valid).toBe(false);
+      expect(parsed.errorCount).toBeGreaterThan(0);
+      expect(parsed.messages.some((message) => message.ruleId === "invalid-action")).toBe(true);
+      expect(parsed.messages.some((message) => typeof message.suggestion === "string")).toBe(true);
     });
   });
 });

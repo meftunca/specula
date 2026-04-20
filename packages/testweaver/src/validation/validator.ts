@@ -33,6 +33,8 @@ export interface ValidationMessage {
   message: string;
   /** Rule ID for the validation */
   ruleId: string;
+  /** Suggested next step or fix */
+  suggestion?: string;
 }
 
 /**
@@ -51,6 +53,8 @@ export interface ValidationResult {
   valid: boolean;
 }
 
+export type ValidationOutputFormat = "text" | "json";
+
 /**
  * Options for validation
  */
@@ -67,10 +71,14 @@ export interface ValidationOptions {
 const DSL_ATTRS = {
   CONTEXT: "data-test-context",
   SCENARIO: "data-test-scenario",
+  STATE: "data-test-state",
   ROUTE: "data-test-route",
   ID: "data-test-id",
   STEP: "data-test-step",
   EXPECT: "data-test-expect",
+  ROLE: "data-test-role",
+  LABEL: "data-test-label",
+  PLACEHOLDER: "data-test-placeholder",
 } as const;
 
 /**
@@ -90,6 +98,24 @@ const VALID_STEP_ACTIONS: readonly string[] = [
   "waitfor",
   "submitcontext",
 ];
+
+/**
+ * Step action aliases normalized to lowercase/no separators
+ */
+const STEP_ACTION_ALIASES: Readonly<Record<string, string>> = {
+  click: "click",
+  type: "type",
+  change: "change",
+  focus: "focus",
+  blur: "blur",
+  key: "key",
+  select: "select",
+  hover: "hover",
+  clear: "clear",
+  custom: "custom",
+  waitfor: "waitfor",
+  submitcontext: "submitcontext",
+};
 
 /**
  * Valid expectation types
@@ -164,16 +190,25 @@ function validateStepDsl(dsl: string): { valid: boolean; invalidAction?: string 
 
   for (const part of parts) {
     const colonIndex = part.indexOf(":");
-    const action = colonIndex === -1
-      ? part.toLowerCase()
-      : part.substring(0, colonIndex).trim().toLowerCase();
+    const rawAction = colonIndex === -1
+      ? part
+      : part.substring(0, colonIndex).trim();
+    const action = normalizeStepAction(rawAction);
 
-    if (!VALID_STEP_ACTIONS.includes(action)) {
-      return { valid: false, invalidAction: action };
+    if (action === undefined || !VALID_STEP_ACTIONS.includes(action)) {
+      return { valid: false, invalidAction: rawAction };
     }
   }
 
   return { valid: true };
+}
+
+/**
+ * Normalizes a step action to lowercase and strips separators.
+ */
+function normalizeStepAction(action: string): string | undefined {
+  const normalized = action.toLowerCase().replace(/[_-]/g, "");
+  return STEP_ACTION_ALIASES[normalized];
 }
 
 /**
@@ -221,7 +256,20 @@ function validateExpectDsl(dsl: string): { valid: boolean; invalidType?: string 
 interface ContextInfo {
   context: string;
   scenario: string;
+  state?: string;
   testIds: Map<string, { line: number; column: number }>;
+}
+
+/**
+ * Returns whether an element has any supported selector attribute.
+ */
+function hasSelector(openingElement: JSXOpeningElement): boolean {
+  return (
+    extractAttribute(openingElement, DSL_ATTRS.ID) !== undefined ||
+    extractAttribute(openingElement, DSL_ATTRS.ROLE) !== undefined ||
+    extractAttribute(openingElement, DSL_ATTRS.LABEL) !== undefined ||
+    extractAttribute(openingElement, DSL_ATTRS.PLACEHOLDER) !== undefined
+  );
 }
 
 /**
@@ -250,6 +298,7 @@ export function validateFile(
       column: 0,
       message: `Failed to read file: ${String(error)}`,
       ruleId: "file-read-error",
+      suggestion: "Verify that the file exists and that TestWeaver has permission to read it.",
     });
     return messages;
   }
@@ -270,95 +319,133 @@ export function validateFile(
       column: 0,
       message: `Failed to parse file: ${String(error)}`,
       ruleId: "parse-error",
+      suggestion: "Fix the syntax error in this source file before running validate again.",
     });
     return messages;
   }
 
   // Track contexts for duplicate ID checking
   const contexts: ContextInfo[] = [];
+  const contextOccurrences = new Map<string, { line: number; column: number; hasState: boolean }>();
 
   // Traverse the AST
   traverse(ast, {
-    JSXOpeningElement(jsxPath) {
-      const node = jsxPath.node;
-      
-      // Check for context definition
-      const contextAttr = extractAttribute(node, DSL_ATTRS.CONTEXT);
-      if (contextAttr !== undefined) {
-        const scenarioAttr = extractAttribute(node, DSL_ATTRS.SCENARIO);
-        contexts.push({
-          context: contextAttr.value,
-          scenario: scenarioAttr?.value ?? "default",
-          testIds: new Map(),
-        });
-      }
+    JSXElement: {
+      enter(jsxPath) {
+        const node = jsxPath.node.openingElement;
 
-      // Check for test ID
-      const testIdAttr = extractAttribute(node, DSL_ATTRS.ID);
-      if (testIdAttr !== undefined && contexts.length > 0 && enforceUniqueTestIdsPerContext) {
-        // Safe to use non-null assertion since we already checked contexts.length > 0
-        const currentContext = contexts[contexts.length - 1]!;
-        const existing = currentContext.testIds.get(testIdAttr.value);
-        if (existing !== undefined) {
-          messages.push({
-            severity: "warning",
-            filePath,
-            line: testIdAttr.line,
-            column: testIdAttr.column,
-            message: `Duplicate data-test-id "${testIdAttr.value}" in context "${currentContext.context}" scenario "${currentContext.scenario}". First defined at line ${existing.line}.`,
-            ruleId: "duplicate-test-id",
-          });
-        } else {
-          currentContext.testIds.set(testIdAttr.value, {
-            line: testIdAttr.line,
-            column: testIdAttr.column,
-          });
-        }
-      }
+        // Check for context definition
+        const contextAttr = extractAttribute(node, DSL_ATTRS.CONTEXT);
+        if (contextAttr !== undefined) {
+          const scenarioAttr = extractAttribute(node, DSL_ATTRS.SCENARIO);
+          const stateAttr = extractAttribute(node, DSL_ATTRS.STATE);
+          const scenario = scenarioAttr?.value ?? "default";
 
-      // Validate step DSL
-      const stepAttr = extractAttribute(node, DSL_ATTRS.STEP);
-      if (stepAttr !== undefined) {
-        const result = validateStepDsl(stepAttr.value);
-        if (!result.valid) {
-          messages.push({
-            severity: "error",
-            filePath,
-            line: stepAttr.line,
-            column: stepAttr.column,
-            message: `Invalid action "${result.invalidAction ?? "unknown"}". Supported: ${VALID_STEP_ACTIONS.join(", ")}`,
-            ruleId: "invalid-action",
+          if (stateAttr === undefined) {
+            const occurrenceKey = `${contextAttr.value}::${scenario}`;
+            const existingOccurrence = contextOccurrences.get(occurrenceKey);
+            if (existingOccurrence !== undefined && !existingOccurrence.hasState) {
+              messages.push({
+                severity: "warning",
+                filePath,
+                line: contextAttr.line,
+                column: contextAttr.column,
+                message: `Context "${contextAttr.value}" scenario "${scenario}" is declared multiple times without data-test-state. Distinct UI branches may merge into one generated test.`,
+                ruleId: "duplicate-scenario-without-state",
+                suggestion: "Add data-test-state values such as success, error, or loading to keep UI branches separate.",
+              });
+            } else {
+              contextOccurrences.set(occurrenceKey, {
+                line: contextAttr.line,
+                column: contextAttr.column,
+                hasState: false,
+              });
+            }
+          }
+
+          contexts.push({
+            context: contextAttr.value,
+            scenario,
+            ...(stateAttr !== undefined ? { state: stateAttr.value } : {}),
+            testIds: new Map(),
           });
         }
 
-        // Check for step without test ID
-        if (testIdAttr === undefined) {
-          messages.push({
-            severity: "warning",
-            filePath,
-            line: stepAttr.line,
-            column: stepAttr.column,
-            message: `Step is missing data-test-id. Steps require a selector to target elements.`,
-            ruleId: "step-missing-id",
-          });
+        // Check for test ID
+        const testIdAttr = extractAttribute(node, DSL_ATTRS.ID);
+        if (testIdAttr !== undefined && contexts.length > 0 && enforceUniqueTestIdsPerContext) {
+          const currentContext = contexts[contexts.length - 1]!;
+          const existing = currentContext.testIds.get(testIdAttr.value);
+          if (existing !== undefined) {
+            messages.push({
+              severity: "warning",
+              filePath,
+              line: testIdAttr.line,
+              column: testIdAttr.column,
+              message: `Duplicate data-test-id "${testIdAttr.value}" in context "${currentContext.context}" scenario "${currentContext.scenario}". First defined at line ${existing.line}.`,
+              ruleId: "duplicate-test-id",
+              suggestion: "Rename one of the duplicate selectors or split the elements into distinct scenarios.",
+            });
+          } else {
+            currentContext.testIds.set(testIdAttr.value, {
+              line: testIdAttr.line,
+              column: testIdAttr.column,
+            });
+          }
         }
-      }
 
-      // Validate expect DSL
-      const expectAttr = extractAttribute(node, DSL_ATTRS.EXPECT);
-      if (expectAttr !== undefined) {
-        const result = validateExpectDsl(expectAttr.value);
-        if (!result.valid) {
-          messages.push({
-            severity: "error",
-            filePath,
-            line: expectAttr.line,
-            column: expectAttr.column,
-            message: `Invalid expectation type "${result.invalidType ?? "unknown"}". Supported: ${VALID_EXPECT_TYPES.join(", ")}`,
-            ruleId: "invalid-expectation",
-          });
+        // Validate step DSL
+        const stepAttr = extractAttribute(node, DSL_ATTRS.STEP);
+        if (stepAttr !== undefined) {
+          const result = validateStepDsl(stepAttr.value);
+          if (!result.valid) {
+            messages.push({
+              severity: "error",
+              filePath,
+              line: stepAttr.line,
+              column: stepAttr.column,
+              message: `Invalid action "${result.invalidAction ?? "unknown"}". Supported: click, type, change, focus, blur, key, select, hover, clear, custom, waitFor, submitContext`,
+              ruleId: "invalid-action",
+              suggestion: "Use one of the supported actions or move unsupported behavior into a custom action.",
+            });
+          }
+
+          if (!hasSelector(node)) {
+            messages.push({
+              severity: "warning",
+              filePath,
+              line: stepAttr.line,
+              column: stepAttr.column,
+              message: "Step is missing a selector. Add one of: data-test-id, data-test-role, data-test-label, or data-test-placeholder.",
+              ruleId: "step-missing-selector",
+              suggestion: "Attach a stable selector so generated tests know which element to target.",
+            });
+          }
         }
-      }
+
+        // Validate expect DSL
+        const expectAttr = extractAttribute(node, DSL_ATTRS.EXPECT);
+        if (expectAttr !== undefined) {
+          const result = validateExpectDsl(expectAttr.value);
+          if (!result.valid) {
+            messages.push({
+              severity: "error",
+              filePath,
+              line: expectAttr.line,
+              column: expectAttr.column,
+              message: `Invalid expectation type "${result.invalidType ?? "unknown"}". Supported: ${VALID_EXPECT_TYPES.join(", ")}`,
+              ruleId: "invalid-expectation",
+              suggestion: "Use a supported expectation type or encode custom behavior via custom:...",
+            });
+          }
+        }
+      },
+      exit(jsxPath) {
+        const contextAttr = extractAttribute(jsxPath.node.openingElement, DSL_ATTRS.CONTEXT);
+        if (contextAttr !== undefined) {
+          contexts.pop();
+        }
+      },
     },
   });
 
@@ -378,7 +465,9 @@ export function validateFiles(
 ): ValidationResult {
   const allMessages: ValidationMessage[] = [];
 
-  for (const filePath of filePaths) {
+  const sortedFilePaths = [...new Set(filePaths)].sort((a, b) => a.localeCompare(b));
+
+  for (const filePath of sortedFilePaths) {
     const messages = validateFile(filePath, options);
     allMessages.push(...messages);
   }
@@ -415,15 +504,24 @@ export function formatValidationResult(result: ValidationResult): string {
     if (a.filePath !== b.filePath) {
       return a.filePath.localeCompare(b.filePath);
     }
-    return a.line - b.line;
+    if (a.line !== b.line) {
+      return a.line - b.line;
+    }
+    if (a.column !== b.column) {
+      return a.column - b.column;
+    }
+    return a.ruleId.localeCompare(b.ruleId);
   });
 
   for (const message of sortedMessages) {
     const severity = message.severity.toUpperCase().padEnd(5);
     const relativePath = path.relative(process.cwd(), message.filePath);
     lines.push(
-      `[${severity}] ${relativePath}:${message.line}: ${message.message}`
+      `[${severity}] ${relativePath}:${message.line}:${message.column} [${message.ruleId}] ${message.message}`
     );
+    if (message.suggestion !== undefined) {
+      lines.push(`        suggestion: ${message.suggestion}`);
+    }
   }
 
   // Add summary
@@ -433,4 +531,11 @@ export function formatValidationResult(result: ValidationResult): string {
   );
 
   return lines.join("\n");
+}
+
+/**
+ * Formats validation results as pretty JSON for CI and tooling.
+ */
+export function formatValidationResultAsJson(result: ValidationResult): string {
+  return JSON.stringify(result, null, 2);
 }

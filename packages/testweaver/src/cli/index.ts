@@ -32,7 +32,9 @@ import {
 import {
   validateFiles,
   formatValidationResult,
+  formatValidationResultAsJson,
   type ValidationOptions,
+  type ValidationOutputFormat,
 } from "../validation/validator.js";
 import type { TestSuite, TestIR } from "../types/ir.js";
 
@@ -61,6 +63,7 @@ interface ValidateOptions {
   config?: string;
   ir?: string;
   strict?: boolean;
+  format?: ValidationOutputFormat;
 }
 
 /**
@@ -88,26 +91,202 @@ function writeFileIfChanged(filePath: string, content: string): boolean {
 }
 
 /**
+ * Sorts source file references deterministically.
+ */
+function sortSourceRefs(sourceFiles: TestSuite["sourceFiles"]): TestSuite["sourceFiles"] {
+  return [...sourceFiles].sort((a, b) => a.filePath.localeCompare(b.filePath));
+}
+
+/**
+ * Sorts test cases deterministically.
+ */
+function sortTestCases(cases: TestSuite["cases"]): TestSuite["cases"] {
+  return [...cases].sort((a, b) => {
+    if (a.scenario !== b.scenario) {
+      return a.scenario.localeCompare(b.scenario);
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/**
+ * Consolidates duplicate case ids inside a suite.
+ */
+function consolidateTestCases(cases: TestSuite["cases"]): TestSuite["cases"] {
+  const caseMap = new Map<string, TestSuite["cases"][number]>();
+
+  for (const testCase of sortTestCases(cases)) {
+    const existing = caseMap.get(testCase.id);
+    if (existing === undefined) {
+      caseMap.set(testCase.id, normalizeTestCase(testCase));
+    } else {
+      caseMap.set(testCase.id, mergeTestCase(existing, testCase));
+    }
+  }
+
+  return sortTestCases([...caseMap.values()]).map(normalizeTestCase);
+}
+
+/**
+ * Sorts suites deterministically.
+ */
+function sortSuites(suites: TestSuite[]): TestSuite[] {
+  return [...suites]
+    .map((suite) => ({
+      ...suite,
+      sourceFiles: sortSourceRefs(suite.sourceFiles),
+      cases: consolidateTestCases(suite.cases),
+    }))
+    .sort((a, b) => a.context.localeCompare(b.context));
+}
+
+/**
+ * Sorts location refs deterministically.
+ */
+function sortLocationRefs<T extends { filePath: string; line: number; column: number }>(items: T[]): T[] {
+  return [...items].sort((a, b) => {
+    if (a.filePath !== b.filePath) {
+      return a.filePath.localeCompare(b.filePath);
+    }
+    if (a.line !== b.line) {
+      return a.line - b.line;
+    }
+    return a.column - b.column;
+  });
+}
+
+/**
+ * Deduplicates location refs deterministically.
+ */
+function dedupeLocationRefs<T extends { filePath: string; line: number; column: number }>(items: T[]): T[] {
+  const unique = new Map<string, T>();
+
+  for (const item of items) {
+    unique.set(`${item.filePath}:${item.line}:${item.column}`, item);
+  }
+
+  return sortLocationRefs([...unique.values()]);
+}
+
+/**
+ * Sorts source-referenced elements deterministically.
+ */
+function sortBySourceLocation<T extends { source?: { filePath: string; line: number; column: number } }>(items: T[]): T[] {
+  return [...items].sort((a, b) => {
+    const sourceA = a.source;
+    const sourceB = b.source;
+
+    if (sourceA === undefined && sourceB === undefined) {
+      return 0;
+    }
+    if (sourceA === undefined) {
+      return 1;
+    }
+    if (sourceB === undefined) {
+      return -1;
+    }
+    if (sourceA.filePath !== sourceB.filePath) {
+      return sourceA.filePath.localeCompare(sourceB.filePath);
+    }
+    if (sourceA.line !== sourceB.line) {
+      return sourceA.line - sourceB.line;
+    }
+    return sourceA.column - sourceB.column;
+  });
+}
+
+/**
+ * Normalizes a test case by sorting its elements and reassigning stable ids.
+ */
+function normalizeTestCase(testCase: TestSuite["cases"][number]): TestSuite["cases"][number] {
+  const steps = sortBySourceLocation(testCase.steps).map((step, index) => ({
+    ...step,
+    id: `step-${index + 1}`,
+  }));
+
+  const expectations = sortBySourceLocation(testCase.expectations).map((expectation, index) => ({
+    ...expectation,
+    id: `exp-${index + 1}`,
+  }));
+
+  return {
+    ...testCase,
+    definedAt: dedupeLocationRefs(testCase.definedAt),
+    steps,
+    expectations,
+  };
+}
+
+/**
+ * Merges duplicate test cases coming from separate JSX branches or repeated context blocks.
+ */
+function mergeTestCase(
+  existing: TestSuite["cases"][number],
+  incoming: TestSuite["cases"][number]
+): TestSuite["cases"][number] {
+  const mergedCase: TestSuite["cases"][number] = {
+    ...existing,
+    type: existing.type === "e2e" || incoming.type === "e2e" ? "e2e" : existing.type,
+    definedAt: [...existing.definedAt, ...incoming.definedAt],
+    steps: [...existing.steps, ...incoming.steps],
+    expectations: [...existing.expectations, ...incoming.expectations],
+  };
+
+  const route = existing.route ?? incoming.route;
+  if (route !== undefined) {
+    mergedCase.route = route;
+  }
+
+  const meta = {
+    ...(existing.meta ?? {}),
+    ...(incoming.meta ?? {}),
+  };
+  if (Object.keys(meta).length > 0) {
+    mergedCase.meta = meta;
+  }
+
+  return normalizeTestCase(mergedCase);
+}
+
+/**
+ * Collects source files from config globs in deterministic order.
+ */
+async function collectSourceFiles(patterns: string[]): Promise<string[]> {
+  const sourceFiles = new Set<string>();
+
+  for (const pattern of patterns) {
+    const matches = await glob(pattern, { ignore: ["node_modules/**", "**/node_modules/**"] });
+    for (const match of matches) {
+      sourceFiles.add(match);
+    }
+  }
+
+  return [...sourceFiles].sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * Scans all source files and merges them into a unified TestIR
  */
 function scanAllFiles(sourceFiles: string[]): TestIR {
   const suites: TestSuite[] = [];
   const suiteMap = new Map<string, TestSuite>();
 
-  for (const filePath of sourceFiles) {
+  for (const filePath of [...sourceFiles].sort((a, b) => a.localeCompare(b))) {
     try {
       const fileSuites = scanFile(filePath);
       
       for (const suite of fileSuites) {
         const existing = suiteMap.get(suite.context);
         if (existing !== undefined) {
-          // Merge cases from this suite into the existing one, avoiding duplicates
+          // Merge cases from this suite into the existing one.
           for (const newCase of suite.cases) {
-            const caseExists = existing.cases.some(
+            const caseIndex = existing.cases.findIndex(
               (c) => c.id === newCase.id
             );
-            if (!caseExists) {
+            if (caseIndex === -1) {
               existing.cases.push(newCase);
+            } else {
+              existing.cases[caseIndex] = mergeTestCase(existing.cases[caseIndex]!, newCase);
             }
           }
           // Merge sourceFiles
@@ -133,7 +312,7 @@ function scanAllFiles(sourceFiles: string[]): TestIR {
     version: 1,
     generatedAt: new Date().toISOString(),
     sourceRoot: process.cwd(),
-    suites,
+    suites: sortSuites(suites),
   };
 }
 
@@ -163,12 +342,15 @@ function generateTestFilesForSuite(
   // Generate Vitest tests (one file per test case)
   for (const testCase of suite.cases) {
     try {
+      const vitestFileName = generateVitestFileName(testCase);
+      const vitestFilePath = path.join(vitestOutDir, vitestFileName);
       const vitestContent = generateVitest({
         ...suite,
         cases: [testCase],
+      }, {
+        outputFilePath: vitestFilePath,
+        sourceRoot: process.cwd(),
       });
-      const vitestFileName = generateVitestFileName(testCase);
-      const vitestFilePath = path.join(vitestOutDir, vitestFileName);
 
       if (writeFileIfChanged(vitestFilePath, vitestContent)) {
         vitestFiles.push(vitestFilePath);
@@ -254,11 +436,7 @@ async function runGenerate(options: GenerateOptions): Promise<void> {
   console.log("[INFO] Scanning source files...");
 
   // Find all source files
-  const sourceFiles: string[] = [];
-  for (const pattern of config.sourceGlobs) {
-    const matches = await glob(pattern, { ignore: ["node_modules/**", "**/node_modules/**"] });
-    sourceFiles.push(...matches);
-  }
+  const sourceFiles = await collectSourceFiles(config.sourceGlobs);
 
   if (sourceFiles.length === 0) {
     console.log("[WARN] No source files found matching patterns:", config.sourceGlobs);
@@ -330,11 +508,7 @@ async function runWatch(options: GenerateOptions): Promise<void> {
     try {
       // Rescan all source files to ensure complete context
       // This is safer than just scanning changed files, as test contexts may span multiple files
-      const allSourceFiles: string[] = [];
-      for (const pattern of config.sourceGlobs) {
-        const matches = await glob(pattern, { ignore: ["node_modules/**", "**/node_modules/**"] });
-        allSourceFiles.push(...matches);
-      }
+      const allSourceFiles = await collectSourceFiles(config.sourceGlobs);
       
       const ir = scanAllFiles(allSourceFiles);
       
@@ -401,30 +575,45 @@ async function runWatch(options: GenerateOptions): Promise<void> {
  * Main validate function
  */
 async function runValidate(options: ValidateOptions): Promise<void> {
-  console.log("[INFO] Loading configuration...");
+  const outputFormat = options.format ?? "text";
+  const shouldLogInfo = outputFormat === "text";
+
+  if (shouldLogInfo) {
+    console.log("[INFO] Loading configuration...");
+  }
   
   const { config: loadedConfig, filepath } = await loadConfig(options.config);
-  if (filepath !== undefined) {
+  if (filepath !== undefined && shouldLogInfo) {
     console.log(`[INFO] Using config from: ${filepath}`);
   }
   const config = mergeConfig(loadedConfig, { config: options.config });
 
-  console.log("[INFO] Scanning source files for validation...");
-
-  // Find all source files
-  const sourceFiles: string[] = [];
-  for (const pattern of config.sourceGlobs) {
-    const matches = await glob(pattern, { ignore: ["node_modules/**", "**/node_modules/**"] });
-    sourceFiles.push(...matches);
+  if (shouldLogInfo) {
+    console.log("[INFO] Scanning source files for validation...");
   }
 
+  // Find all source files
+  const sourceFiles = await collectSourceFiles(config.sourceGlobs);
+
   if (sourceFiles.length === 0) {
-    console.log("[WARN] No source files found matching patterns:", config.sourceGlobs);
+    if (shouldLogInfo) {
+      console.log("[WARN] No source files found matching patterns:", config.sourceGlobs);
+    } else {
+      console.log(formatValidationResultAsJson({
+        messages: [],
+        errorCount: 0,
+        warningCount: 0,
+        infoCount: 0,
+        valid: true,
+      }));
+    }
     return;
   }
 
-  console.log(`[INFO] Found ${sourceFiles.length} source file(s)`);
-  console.log("[INFO] Validating DSL usage...");
+  if (shouldLogInfo) {
+    console.log(`[INFO] Found ${sourceFiles.length} source file(s)`);
+    console.log("[INFO] Validating DSL usage...");
+  }
 
   // Validate all files
   const validationOptions: ValidationOptions = {
@@ -435,19 +624,25 @@ async function runValidate(options: ValidateOptions): Promise<void> {
   const result = validateFiles(sourceFiles, validationOptions);
 
   // Output results
-  console.log("");
-  console.log(formatValidationResult(result));
+  if (outputFormat === "json") {
+    console.log(formatValidationResultAsJson(result));
+  } else {
+    console.log("");
+    console.log(formatValidationResult(result));
+  }
 
   // Exit with appropriate code
   if (!result.valid) {
-    if (options.strict === true) {
+    if (options.strict === true && shouldLogInfo) {
       console.log("[ERROR] Validation failed with --strict mode (errors or warnings found)");
-    } else {
+    } else if (shouldLogInfo) {
       console.log("[ERROR] Validation failed (errors found)");
     }
     process.exit(1);
   } else {
-    console.log("[INFO] Validation passed");
+    if (shouldLogInfo) {
+      console.log("[INFO] Validation passed");
+    }
     process.exit(0);
   }
 }
@@ -499,6 +694,7 @@ program
   .option("-c, --config <path>", "Path to config file")
   .option("-i, --ir <file>", "Path to IR file")
   .option("--strict", "Treat warnings as errors")
+  .option("--format <type>", "Validation output format: text or json", "text")
   .action((options: ValidateOptions) => {
     runValidate(options).catch((error: unknown) => {
       console.error("[ERROR] Validation failed:", error);

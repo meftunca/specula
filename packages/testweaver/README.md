@@ -2,18 +2,23 @@
 
 **Context-Based Automatic Test Generation for React Applications**
 
-TestWeaver is a powerful CLI tool that generates test files automatically from React (TSX/JSX) components using a simple DSL (Domain Specific Language) based on data attributes. It generates both unit tests (Vitest + React Testing Library) and E2E tests (Playwright) from your component markup.
+TestWeaver is a CLI tool that generates test files automatically from React (TSX/JSX) components using a simple attribute-based DSL. Today it generates **Vitest + React Testing Library** component tests and **Playwright** E2E tests from the same component markup.
+
+> **Current stable scope:** React TSX/JSX + attribute DSL + Vitest + Playwright.
+>
+> Vue/Svelte support, comment macro DSL, and broader unit/logic generation remain planned roadmap items rather than stable features.
 
 ## Features
 
 - 🎯 **DSL-Based Test Generation** - Define tests directly in your component markup using `data-test-*` attributes
-- ⚡ **Multiple Test Types** - Generate both Vitest (UI/unit tests) and Playwright (E2E tests) from the same source
+- ⚡ **Multiple Test Outputs** - Generate both Vitest (UI/component tests) and Playwright (E2E tests) from the same source
 - 🔍 **Rich Selector Support** - Use testId, role, label, or placeholder selectors
 - 🎬 **Comprehensive Actions** - Support for click, type, select, hover, clear, keyboard, and more
 - ✅ **Flexible Assertions** - Check visibility, text, values, ARIA attributes, CSS classes, URLs, and snapshots
 - 🔧 **Configurable** - Customize source patterns, output directories, and generators
 - 📊 **Validation** - Built-in DSL validation with helpful error messages
 - 👁️ **Watch Mode** - Automatically regenerate tests when source files change
+- 🧾 **CI-Friendly Validation Output** - Emit validation results as human-readable text or JSON
 
 ## Quick Start
 
@@ -42,6 +47,9 @@ node dist/cli/index.js validate
 
 # Validate with strict mode (treat warnings as errors)
 node dist/cli/index.js validate --strict
+
+# Validate with JSON output
+node dist/cli/index.js validate --format json
 ```
 
 ### Using the test:cli Script
@@ -162,15 +170,19 @@ describe("login", () => {
   it("happy-path", async () => {
     render(<Login />);
 
+    const email = () => screen.getByTestId("email");
+    const password = () => screen.getByTestId("password");
+    const submit = () => screen.getByTestId("submit");
+    const successMessage = () => screen.getByTestId("success-message");
+
     // Steps
-    fireEvent.change(screen.getByTestId("email"), { target: { value: "user@example.com" } });
-    fireEvent.change(screen.getByTestId("password"), { target: { value: "123456" } });
-    fireEvent.click(screen.getByTestId("submit"));
+    fireEvent.change(email(), { target: { value: "user@example.com" } });
+    fireEvent.change(password(), { target: { value: "123456" } });
+    fireEvent.click(submit());
 
     // Expectations
-    const el_exp_1 = screen.getByTestId("success-message");
-    expect(el_exp_1).toBeVisible();
-    expect(el_exp_1).toHaveTextContent("Welcome");
+    expect(successMessage()).toBeVisible();
+    expect(successMessage()).toHaveTextContent("Welcome");
   });
 });
 ```
@@ -186,14 +198,19 @@ test.describe("login", () => {
   test("happy-path", async ({ page }) => {
     await page.goto("/login");
 
+    const email = page.locator('[data-test-id="email"]');
+    const password = page.locator('[data-test-id="password"]');
+    const submit = page.locator('[data-test-id="submit"]');
+    const successMessage = page.locator('[data-test-id="success-message"]');
+
     // Steps
-    await page.locator('[data-test-id="email"]').fill("user@example.com");
-    await page.locator('[data-test-id="password"]').fill("123456");
-    await page.locator('[data-test-id="submit"]').click();
+    await email.fill("user@example.com");
+    await password.fill("123456");
+    await submit.click();
 
     // Expectations
-    await expect(page.locator('[data-test-id="success-message"]')).toBeVisible();
-    await expect(page.locator('[data-test-id="success-message"]')).toContainText("Welcome");
+    await expect(successMessage).toBeVisible();
+    await expect(successMessage).toContainText("Welcome");
   });
 });
 ```
@@ -265,19 +282,22 @@ TestWeaver uses [cosmiconfig](https://github.com/cosmiconfig/cosmiconfig) for co
 
 **"Invalid action"**
 ```
-[ERROR] src/Component.tsx:11: Invalid action "tap". Supported: click, type, change, focus, blur, key, select, hover, clear, custom, waitFor, submitContext
+[ERROR] src/Component.tsx:11:18 [invalid-action] Invalid action "tap". Supported: click, type, change, focus, blur, key, select, hover, clear, custom, waitFor, submitContext
+  suggestion: Use one of the supported actions or move unsupported behavior into a custom action.
 ```
 Solution: Use one of the supported actions listed in the error message.
 
 **"Invalid expectation type"**
 ```
-[ERROR] src/Component.tsx:15: Invalid expectation type "invalid". Supported: visible, not-visible, exists, not-exists, text, exact-text, value, has-class, not-has-class, aria, url-contains, url-exact, snapshot, custom
+[ERROR] src/Component.tsx:15:20 [invalid-expectation] Invalid expectation type "invalid". Supported: visible, not-visible, exists, not-exists, text, exact-text, value, has-class, not-has-class, aria, url-contains, url-exact, snapshot, custom
+  suggestion: Use a supported expectation type or encode custom behavior via custom:...
 ```
 Solution: Use a supported expectation type.
 
 **"Step missing selector"**
 ```
-[WARN] Step is missing a selector. Steps require data-test-id, data-test-role, data-test-label, or data-test-placeholder.
+[WARNING] src/Component.tsx:20:10 [step-missing-selector] Step is missing a selector. Add one of: data-test-id, data-test-role, data-test-label, or data-test-placeholder.
+  suggestion: Attach a stable selector so generated tests know which element to target.
 ```
 Solution: Add a selector attribute to elements with `data-test-step`.
 
@@ -294,6 +314,23 @@ Solution: Use unique test IDs within each context/scenario.
 3. **Meaningful Scenarios**: Use scenario names that describe the test case
 4. **ARIA-First**: Prefer ARIA roles and labels for better accessibility testing
 5. **Incremental Steps**: Order steps logically to represent user flow
+
+## Status Snapshot
+
+### Stable today
+
+- React `tsx` / `jsx`
+- Attribute DSL (`data-test-*`)
+- Vitest generator
+- Playwright generator
+- Validation + watch mode
+
+### Planned next
+
+- Vue / Svelte parser adapters
+- Comment macro DSL
+- Broader unit / logic generation
+- More advanced config and generator customization
 
 ## Documentation
 

@@ -1,73 +1,99 @@
-# React + TypeScript + Vite
+# Example App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Bu klasör, TestWeaver için **gerçek React kullanım örneklerini** içerir. Amaç sadece demo UI göstermek değil; parser, validation ve generator davranışını gerçek bileşenler üzerinde görmek.
 
-Currently, two official plugins are available:
+## İçerdiği örnek bileşenler
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `Login.tsx`
+- `Search.tsx`
+- `ContactForm.tsx`
+- `Modal.tsx`
 
-## React Compiler
+Bu bileşenlerde `data-test-*` attribute DSL’i kullanılır ve TestWeaver bu işaretlerden Vitest + Playwright testleri üretir.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Geliştirme
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## TestWeaver ile gerçek generate akışı
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Bu uygulama üzerinde gerçek üretim için proje kökünden veya bu klasörden şu komut çalıştırılabilir:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd example-app
+node ../packages/testweaver/dist/cli/index.js generate
 ```
+
+Validation için:
+
+```bash
+cd example-app
+node ../packages/testweaver/dist/cli/index.js validate
+```
+
+## Üretilen gerçek dosyalar
+
+Son generate çalıştırmasında aşağıdaki dosyalar üretildi:
+
+### Vitest
+
+- `__generated__/vitest/contact.submit-form.form.test.tsx`
+- `__generated__/vitest/contact.submit-form.success.test.tsx`
+- `__generated__/vitest/login.happy-path.test.tsx`
+- `__generated__/vitest/modal-trigger.open-modal.test.tsx`
+- `__generated__/vitest/modal.accessibility.test.tsx`
+- `__generated__/vitest/search.happy-path.test.tsx`
+
+### Playwright
+
+- `__generated__/e2e/contact.submit-form.form.spec.ts`
+- `__generated__/e2e/contact.submit-form.success.spec.ts`
+- `__generated__/e2e/login.happy-path.spec.ts`
+- `__generated__/e2e/modal-trigger.open-modal.spec.ts`
+- `__generated__/e2e/modal.accessibility.spec.ts`
+- `__generated__/e2e/search.happy-path.spec.ts`
+
+## Bu örnek app neyi göstermeye yarıyor?
+
+Bu app sayesinde şu konular gerçek veriyle görülebilir:
+
+- context / scenario ayrımı
+- farklı selector türleri (`data-test-id`, `data-test-role`, `data-test-label`, `data-test-placeholder`)
+- step action’ları (`type`, `click`, `select`, `key`)
+- expectation türleri (`visible`, `text`, `aria`, `has-class`)
+- aynı kaynaktan hem Vitest hem Playwright üretimi
+
+## Gerçek generate çıktısından gözlenen durum
+
+Bu app üzerinde yaptığımız son generate doğrulamasında şu iyileşmeleri gördük:
+
+1. **Doğru component export seçimi**
+   - `modal-trigger.open-modal.test.tsx` artık `ModalDemo` import ediyor.
+
+2. **State-aware branch ayrımı**
+   - `ContactForm` artık `data-test-state="form"` ve `data-test-state="success"` kullanıyor.
+   - Bu sayede form ve başarı branch’leri ayrı generated dosyalara ayrışıyor.
+
+3. **Route uyumu**
+   - Example app artık `/login`, `/search`, `/contact`, `/modal` route’larını gerçek anlamda servis ediyor.
+
+### Hâlâ dikkat edilmesi gereken noktalar
+
+- Generated Vitest import path’leri hâlâ `src/...` biçiminde üretiliyor; bu, her projede doğrudan çalışacak garanti bir çözüm değil.
+- Generated Vitest import path’leri artık example-app içinde relative üretiliyor; yine de props/wrapper gerektiren komponentlerde ek render recipe ihtiyacı devam ediyor.
+- Generated testleri bu example app içinde otomatik koşturan ayrı bir Vitest/Playwright smoke pipeline henüz tanımlı değil.
+
+Bu yüzden bu app artık hem **çalışan örnek** hem de **kalan productization işleri için regression alanı** olarak kullanılabilir.
+
+## Neden önemli?
+
+Bu klasör artık sadece demo app değil; aynı zamanda:
+
+- parser regression alanı,
+- generator kalite kontrol alanı,
+- dokümantasyon için gerçek örnek kaynağı
+
+olarak kullanılabilir.

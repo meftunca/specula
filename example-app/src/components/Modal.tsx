@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import "./Modal.css";
 
 interface ModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  title: string;
-  children: React.ReactNode;
+  isOpen?: boolean;
+  onClose?: () => void;
+  title?: string;
+  children?: React.ReactNode;
 }
 
 /**
@@ -20,7 +20,12 @@ interface ModalProps {
  * @test-context modal
  * @test-scenario accessibility
  */
-export function Modal({ isOpen, onClose, title, children }: ModalProps) {
+export function Modal({
+  isOpen = true,
+  onClose = () => undefined,
+  title = "Confirmation",
+  children = <p>Modal content</p>,
+}: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -55,6 +60,7 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
       }}
       data-test-context="modal"
       data-test-scenario="accessibility"
+      data-test-route="/modal"
     >
       <div
         ref={modalRef}
@@ -77,7 +83,6 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
             aria-label="Close modal"
             data-test-id="close-button"
             data-test-role="button"
-            data-test-step="click"
             data-test-expect="aria:label:Close modal"
           >
             ×
@@ -92,7 +97,6 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
             className="modal-button secondary"
             onClick={onClose}
             data-test-id="cancel-button"
-            data-test-step="click"
           >
             Cancel
           </button>
@@ -125,6 +129,7 @@ export function ModalDemo() {
       className="modal-demo"
       data-test-context="modal-trigger"
       data-test-scenario="open-modal"
+      data-test-route="/modal"
     >
       <h2>Modal Demo</h2>
       <button

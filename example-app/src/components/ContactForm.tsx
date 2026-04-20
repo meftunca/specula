@@ -68,6 +68,7 @@ export function ContactForm({ onSubmit }: ContactFormProps) {
         className="contact-container"
         data-test-context="contact"
         data-test-scenario="submit-form"
+        data-test-state="success"
         data-test-route="/contact"
       >
         <div
@@ -91,6 +92,7 @@ export function ContactForm({ onSubmit }: ContactFormProps) {
       className="contact-container"
       data-test-context="contact"
       data-test-scenario="submit-form"
+      data-test-state="form"
       data-test-route="/contact"
     >
       <h2 className="contact-title">Contact Us</h2>
@@ -101,8 +103,6 @@ export function ContactForm({ onSubmit }: ContactFormProps) {
             className="error-message"
             role="alert"
             aria-live="assertive"
-            data-test-id="error-message"
-            data-test-expect="visible; aria:live:assertive"
           >
             {error}
           </div>

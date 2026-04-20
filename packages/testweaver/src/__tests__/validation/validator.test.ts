@@ -9,6 +9,7 @@ import {
   validateFile,
   validateFiles,
   formatValidationResult,
+  formatValidationResultAsJson,
 } from "../../validation/validator.js";
 
 // Create temp directory for test fixtures
@@ -115,6 +116,7 @@ describe("Validation", () => {
       const dupWarning = warnings.find((w) => w.ruleId === "duplicate-test-id");
       expect(dupWarning).toBeDefined();
       expect(dupWarning?.message).toContain('Duplicate data-test-id "field"');
+      expect(dupWarning?.suggestion).toContain("Rename one of the duplicate selectors");
     });
 
     it("should warn about steps without test ID", () => {
@@ -135,8 +137,30 @@ describe("Validation", () => {
       const messages = validateFile(filePath);
       const warnings = messages.filter((m) => m.severity === "warning");
       expect(warnings.length).toBeGreaterThanOrEqual(1);
-      const stepWarning = warnings.find((w) => w.ruleId === "step-missing-id");
+      const stepWarning = warnings.find((w) => w.ruleId === "step-missing-selector");
       expect(stepWarning).toBeDefined();
+    });
+
+    it("should accept non-testId selectors for steps", () => {
+      const filePath = path.join(tempDir, "selector-variants.tsx");
+      fs.writeFileSync(
+        filePath,
+        `
+        export function SelectorVariants() {
+          return (
+            <div data-test-context="test" data-test-scenario="selectors">
+              <input data-test-role="searchbox" data-test-step="type:value" />
+              <button data-test-label="Apply filters" data-test-step="click" />
+              <input data-test-placeholder="Search" data-test-step="clear" />
+            </div>
+          );
+        }
+      `
+      );
+
+      const messages = validateFile(filePath);
+      const selectorWarnings = messages.filter((m) => m.ruleId === "step-missing-selector");
+      expect(selectorWarnings).toHaveLength(0);
     });
 
     it("should validate multiple actions in a single step", () => {
@@ -223,6 +247,103 @@ describe("Validation", () => {
       const errors = messages.filter((m) => m.severity === "error");
       expect(errors).toHaveLength(0);
     });
+
+    it("should accept normalized step action aliases", () => {
+      const filePath = path.join(tempDir, "normalized-actions.tsx");
+      fs.writeFileSync(
+        filePath,
+        `
+        export function NormalizedActionsComponent() {
+          return (
+            <div data-test-context="test" data-test-scenario="aliases">
+              <input data-test-id="f1" data-test-step="wait_for" />
+              <form data-test-id="f2" data-test-step="submit-context" />
+            </div>
+          );
+        }
+      `
+      );
+
+      const messages = validateFile(filePath);
+      const errors = messages.filter((m) => m.severity === "error");
+      expect(errors).toHaveLength(0);
+    });
+
+    it("should isolate duplicate test-id checks across nested contexts", () => {
+      const filePath = path.join(tempDir, "nested-contexts.tsx");
+      fs.writeFileSync(
+        filePath,
+        `
+        export function NestedContextsComponent() {
+          return (
+            <section data-test-context="parent" data-test-scenario="default">
+              <input data-test-id="shared" data-test-step="type:value" />
+              <div data-test-context="child" data-test-scenario="default">
+                <input data-test-id="shared" data-test-step="type:value" />
+              </div>
+            </section>
+          );
+        }
+      `
+      );
+
+      const messages = validateFile(filePath);
+      const duplicateWarnings = messages.filter((m) => m.ruleId === "duplicate-test-id");
+      expect(duplicateWarnings).toHaveLength(0);
+    });
+
+    it("should warn when the same context and scenario repeat without a state tag", () => {
+      const filePath = path.join(tempDir, "duplicate-scenario-no-state.tsx");
+      fs.writeFileSync(
+        filePath,
+        `
+        export function DuplicateScenarioNoState() {
+          return (
+            <>
+              <section data-test-context="login" data-test-scenario="submit">
+                <button data-test-id="submit" data-test-step="click" />
+              </section>
+              <section data-test-context="login" data-test-scenario="submit">
+                <div data-test-id="success" data-test-expect="visible" />
+              </section>
+            </>
+          );
+        }
+      `
+      );
+
+      const messages = validateFile(filePath);
+      const scenarioWarnings = messages.filter((m) => m.ruleId === "duplicate-scenario-without-state");
+
+      expect(scenarioWarnings).toHaveLength(1);
+      expect(scenarioWarnings[0]?.suggestion).toContain("data-test-state");
+    });
+
+    it("should allow repeated scenarios when each branch defines a state tag", () => {
+      const filePath = path.join(tempDir, "duplicate-scenario-with-state.tsx");
+      fs.writeFileSync(
+        filePath,
+        `
+        export function DuplicateScenarioWithState() {
+          return (
+            <>
+              <section data-test-context="login" data-test-scenario="submit" data-test-state="success">
+                <div data-test-id="success" data-test-expect="visible" />
+              </section>
+              <section data-test-context="login" data-test-scenario="submit" data-test-state="error">
+                <div data-test-id="error" data-test-expect="visible" />
+              </section>
+            </>
+          );
+        }
+      `
+      );
+
+      const messages = validateFile(filePath);
+      const scenarioWarnings = messages.filter((m) => m.ruleId === "duplicate-scenario-without-state");
+
+      expect(scenarioWarnings).toHaveLength(0);
+    });
   });
 
   describe("validateFiles", () => {
@@ -295,6 +416,71 @@ describe("Validation", () => {
       const formatted = formatValidationResult(result);
       expect(formatted).toContain("Validation complete:");
       expect(formatted).toContain("0 error(s)");
+    });
+
+    it("should format messages in deterministic order", () => {
+      const result = {
+        messages: [
+          {
+            severity: "warning" as const,
+            filePath: path.join(tempDir, "b.tsx"),
+            line: 5,
+            column: 2,
+            message: "B",
+            ruleId: "b-rule",
+          },
+          {
+            severity: "error" as const,
+            filePath: path.join(tempDir, "a.tsx"),
+            line: 1,
+            column: 9,
+            message: "A2",
+            ruleId: "z-rule",
+          },
+          {
+            severity: "error" as const,
+            filePath: path.join(tempDir, "a.tsx"),
+            line: 1,
+            column: 3,
+            message: "A1",
+            ruleId: "a-rule",
+          },
+        ],
+        errorCount: 2,
+        warningCount: 1,
+        infoCount: 0,
+        valid: false,
+      };
+
+      const formatted = formatValidationResult(result);
+      const indexA1 = formatted.indexOf("a.tsx:1:3 [a-rule] A1");
+      const indexA2 = formatted.indexOf("a.tsx:1:9 [z-rule] A2");
+      const indexB = formatted.indexOf("b.tsx:5:2 [b-rule] B");
+
+      expect(indexA1).toBeGreaterThanOrEqual(0);
+      expect(indexA2).toBeGreaterThan(indexA1);
+      expect(indexB).toBeGreaterThan(indexA2);
+    });
+
+    it("should include rule ids and suggestions in text output", () => {
+      const result = validateFiles([
+        path.join(tempDir, "step-no-id.tsx"),
+      ]);
+      const formatted = formatValidationResult(result);
+
+      expect(formatted).toContain("[step-missing-selector]");
+      expect(formatted).toContain("suggestion:");
+    });
+  });
+
+  describe("formatValidationResultAsJson", () => {
+    it("should serialize validation results as JSON", () => {
+      const result = validateFiles([]);
+      const formatted = formatValidationResultAsJson(result);
+      const parsed = JSON.parse(formatted) as { valid: boolean; messages: unknown[] };
+
+      expect(parsed.valid).toBe(true);
+      expect(Array.isArray(parsed.messages)).toBe(true);
     });
   });
 });
